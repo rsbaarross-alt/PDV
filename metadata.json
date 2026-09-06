@@ -1,0 +1,6 @@
+{
+  "name": "PDV Inteligente v2.0",
+  "description": "Sistema de Ponto de Venda de alta performance com busca tolerante, atalhos de teclado, fluxo de pagamento e integração com banco de dados Supabase.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
