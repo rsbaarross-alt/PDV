@@ -417,6 +417,233 @@ app.post(['/api/sales', '/sales'], async (req: Request, res: Response) => {
   }
 });
 
+// -------------------------------------------------------------
+// GESTÃO DE USUÁRIOS & CONTROLE DE ACESSO RBAC
+// -------------------------------------------------------------
+
+// Middleware de proteção de rotas por Cargo/Role
+const requireRole = (allowedRoles: string[]) => {
+  return (req: Request, res: Response, next: express.NextFunction) => {
+    const userRole = (
+      (req.headers['x-user-role'] as string) ||
+      (req.query.role as string) ||
+      'operador'
+    ).toLowerCase();
+
+    if (!allowedRoles.includes(userRole)) {
+      return res.status(403).json({
+        error: 'Acesso Negado: Permissão insuficiente.',
+        requiredRoles: allowedRoles,
+        providedRole: userRole,
+      });
+    }
+    next();
+  };
+};
+
+// Armazenamento em memória de usuários no servidor
+let SERVER_USERS = [
+  {
+    id: 'user-1',
+    matricula: '1001',
+    nome: 'Carlos Silva',
+    email: 'carlos.silva@supermercado.com',
+    senha: '1234',
+    cargo: 'operador',
+    status: 'ativo',
+    avatarCor: '#1D4ED8',
+    criadoEm: '2026-01-15T08:00:00.000Z',
+    ultimoAcesso: new Date().toISOString(),
+    estaConectado: true,
+    terminalConectado: 'Caixa 04',
+  },
+  {
+    id: 'user-2',
+    matricula: '2002',
+    nome: 'Mariana Costa',
+    email: 'admin@supermercado.com',
+    senha: 'admin',
+    cargo: 'admin',
+    status: 'ativo',
+    avatarCor: '#7C3AED',
+    criadoEm: '2026-01-10T09:30:00.000Z',
+    ultimoAcesso: new Date().toISOString(),
+    estaConectado: false,
+  },
+  {
+    id: 'user-3',
+    matricula: '1003',
+    nome: 'Lucas Mendes',
+    email: 'lucas.mendes@supermercado.com',
+    senha: '1234',
+    cargo: 'operador',
+    status: 'ativo',
+    avatarCor: '#059669',
+    criadoEm: '2026-02-01T14:15:00.000Z',
+    ultimoAcesso: new Date().toISOString(),
+    estaConectado: true,
+    terminalConectado: 'Caixa 01',
+  },
+  {
+    id: 'user-4',
+    matricula: '1004',
+    nome: 'Ana Beatriz',
+    email: 'ana.beatriz@supermercado.com',
+    senha: '1234',
+    cargo: 'supervisor',
+    status: 'ativo',
+    avatarCor: '#D97706',
+    criadoEm: '2026-02-15T11:00:00.000Z',
+    ultimoAcesso: new Date().toISOString(),
+    estaConectado: false,
+  },
+];
+
+// 1. Listar todos os usuários (com filtros opcionais ?status=ativo & ?role=...)
+app.get(['/api/users', '/users'], async (req: Request, res: Response) => {
+  const { status, role } = req.query;
+  const sb = getSupabase();
+
+  if (sb) {
+    try {
+      let query = sb.from('users').select('*');
+      if (status) query = query.eq('status', String(status));
+      if (role) query = query.eq('cargo', String(role));
+      const { data, error } = await query;
+      if (!error && data && data.length > 0) {
+        return res.json({ source: 'supabase', users: data });
+      }
+    } catch {
+      // Fallback para armazenamento interno
+    }
+  }
+
+  let result = [...SERVER_USERS];
+  if (status) {
+    result = result.filter((u) => u.status === status);
+  }
+  if (role) {
+    result = result.filter((u) => u.cargo === role);
+  }
+
+  // Remove campo senha ao listar por segurança
+  const safeUsers = result.map(({ senha, ...rest }) => rest);
+  return res.json({ source: 'server_memory', users: safeUsers, total: safeUsers.length });
+});
+
+// 2. Endpoint exclusivo para listar TODOS OS USUÁRIOS ATIVOS
+app.get(['/api/users/active', '/users/active'], async (_req: Request, res: Response) => {
+  const sb = getSupabase();
+
+  if (sb) {
+    try {
+      const { data, error } = await sb.from('users').select('*').eq('status', 'ativo');
+      if (!error && data) {
+        return res.json({
+          source: 'supabase',
+          status: 'ativo',
+          total: data.length,
+          users: data,
+        });
+      }
+    } catch {
+      // Fallback para servidor
+    }
+  }
+
+  const activeUsers = SERVER_USERS.filter((u) => u.status === 'ativo').map(
+    ({ senha, ...rest }) => rest
+  );
+
+  return res.json({
+    source: 'server_memory',
+    status: 'ativo',
+    total: activeUsers.length,
+    users: activeUsers,
+  });
+});
+
+// 3. Cadastrar usuário (Acesso restrito: admin ou gerente)
+app.post(['/api/users', '/users'], requireRole(['admin', 'gerente']), (req: Request, res: Response) => {
+  const { nome, email, senha = '1234', cargo = 'operador', status = 'ativo', matricula } = req.body;
+
+  if (!nome || !email) {
+    return res.status(400).json({ error: 'Nome e E-mail são obrigatórios.' });
+  }
+
+  const cleanEmail = email.trim().toLowerCase();
+  const exists = SERVER_USERS.find((u) => u.email.toLowerCase() === cleanEmail);
+  if (exists) {
+    return res.status(409).json({ error: 'Já existe um usuário com este e-mail.' });
+  }
+
+  const newUser = {
+    id: `user-${Date.now()}`,
+    matricula: matricula || (1000 + SERVER_USERS.length + 1).toString(),
+    nome: nome.trim(),
+    email: cleanEmail,
+    senha,
+    cargo,
+    status,
+    avatarCor: '#1D4ED8',
+    criadoEm: new Date().toISOString(),
+    ultimoAcesso: new Date().toISOString(),
+    estaConectado: false,
+  };
+
+  SERVER_USERS.push(newUser);
+  const { senha: _, ...safeUser } = newUser;
+  return res.status(201).json({ success: true, user: safeUser });
+});
+
+// 4. Alterar Status Ativo/Inativo (Admin ou Gerente)
+app.patch(
+  ['/api/users/:id/status', '/users/:id/status'],
+  requireRole(['admin', 'gerente']),
+  (req: Request, res: Response) => {
+    const { id } = req.params;
+    const { status } = req.body;
+
+    const user = SERVER_USERS.find((u) => u.id === id);
+    if (!user) {
+      return res.status(404).json({ error: 'Usuário não encontrado.' });
+    }
+
+    user.status = status === 'inativo' ? 'inativo' : 'ativo';
+    if (user.status === 'inativo') {
+      user.estaConectado = false;
+    }
+
+    const { senha: _, ...safeUser } = user;
+    return res.json({ success: true, user: safeUser });
+  }
+);
+
+// 5. Excluir usuário (Acesso EXCLUSIVO do Administrador)
+app.delete(
+  ['/api/users/:id', '/users/:id'],
+  requireRole(['admin']),
+  (req: Request, res: Response) => {
+    const { id } = req.params;
+    const index = SERVER_USERS.findIndex((u) => u.id === id);
+
+    if (index === -1) {
+      return res.status(404).json({ error: 'Usuário não encontrado.' });
+    }
+
+    // Não permitir excluir o último admin
+    if (SERVER_USERS[index].cargo === 'admin') {
+      const adminCount = SERVER_USERS.filter((u) => u.cargo === 'admin').length;
+      if (adminCount <= 1) {
+        return res.status(400).json({ error: 'Não é permitido remover o único Administrador do sistema.' });
+      }
+    }
+
+    SERVER_USERS.splice(index, 1);
+    return res.json({ success: true, message: 'Usuário removido com sucesso.' });
+  }
+);
+
 // Inicialização do servidor Vite e Express
 async function startServer() {
   if (process.env.NODE_ENV !== 'production') {

@@ -1,7 +1,50 @@
-import { SystemUser, UserRole, UserStatus } from '../types';
+import { SystemUser, UserRole, UserStatus, RolePermissions } from '../types';
 
 const STORAGE_KEY = 'pdv_system_users_v2';
 const LEGACY_STORAGE_KEY = 'pdv_registered_users';
+
+export const ROLE_PERMISSIONS: Record<UserRole, RolePermissions> = {
+  admin: {
+    canAccessAdmin: true,
+    canManageUsers: true,
+    canDeleteUsers: true,
+    canManageProducts: true,
+    canAuthorizeDiscounts: true,
+    canCancelSales: true,
+    canOperatePDV: true,
+    canViewReports: true,
+  },
+  gerente: {
+    canAccessAdmin: true,
+    canManageUsers: true,
+    canDeleteUsers: false,
+    canManageProducts: true,
+    canAuthorizeDiscounts: true,
+    canCancelSales: true,
+    canOperatePDV: true,
+    canViewReports: true,
+  },
+  supervisor: {
+    canAccessAdmin: false,
+    canManageUsers: false,
+    canDeleteUsers: false,
+    canManageProducts: false,
+    canAuthorizeDiscounts: true,
+    canCancelSales: true,
+    canOperatePDV: true,
+    canViewReports: false,
+  },
+  operador: {
+    canAccessAdmin: false,
+    canManageUsers: false,
+    canDeleteUsers: false,
+    canManageProducts: false,
+    canAuthorizeDiscounts: false,
+    canCancelSales: false,
+    canOperatePDV: true,
+    canViewReports: false,
+  },
+};
 
 const INITIAL_USERS: SystemUser[] = [
   {
@@ -25,14 +68,14 @@ const INITIAL_USERS: SystemUser[] = [
     nome: 'Mariana Costa',
     email: 'admin@supermercado.com',
     senha: 'admin',
-    cargo: 'gerente',
+    cargo: 'admin',
     status: 'ativo',
     avatarCor: '#7C3AED',
     criadoEm: '2026-01-10T09:30:00.000Z',
     ultimoAcesso: '2026-09-06T15:20:00.000Z',
     estaConectado: false,
     terminalConectado: undefined,
-    ipOuDispositivo: 'Gerência Web (Firefox / Windows)',
+    ipOuDispositivo: 'Painel Admin Web (Chrome / Linux)',
   },
   {
     id: 'user-3',
@@ -105,7 +148,16 @@ export const getSystemUsers = (): SystemUser[] => {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
-      return JSON.parse(raw);
+      const parsed: SystemUser[] = JSON.parse(raw);
+      // Garante que o administrador padrão exista com role admin
+      if (Array.isArray(parsed) && !parsed.some((u) => u.cargo === 'admin')) {
+        const adminUser = parsed.find((u) => u.email.toLowerCase() === 'admin@supermercado.com');
+        if (adminUser) {
+          adminUser.cargo = 'admin';
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
+        }
+      }
+      return parsed;
     }
 
     // Tenta migrar da chave legada se existir
@@ -381,3 +433,46 @@ export const getUserMetrics = () => {
 
   return { total, conectados, ativos, inativos };
 };
+
+/**
+ * Retorna todos os usuários com status 'ativo' no sistema
+ */
+export const getActiveUsers = (): SystemUser[] => {
+  return getSystemUsers().filter((u) => u.status === 'ativo');
+};
+
+/**
+ * Retorna todos os usuários atualmente conectados
+ */
+export const getConnectedUsers = (): SystemUser[] => {
+  return getSystemUsers().filter((u) => u.estaConectado);
+};
+
+/**
+ * Verifica se a role possui privilégio de Administrador Total
+ */
+export const isAdminRole = (role?: UserRole): boolean => {
+  return role === 'admin';
+};
+
+/**
+ * Verifica se o usuário tem permissão para acessar o painel de usuários
+ */
+export const canAccessUserManagement = (role?: UserRole): boolean => {
+  return role === 'admin' || role === 'gerente';
+};
+
+/**
+ * Verifica se o usuário autenticado tem permissão para deletar outro usuário
+ */
+export const canDeleteUser = (actorRole?: UserRole, targetUser?: SystemUser): boolean => {
+  if (actorRole !== 'admin') return false;
+  if (!targetUser) return true;
+  // Não permitir auto-exclusão do único admin
+  const allAdmins = getSystemUsers().filter((u) => u.cargo === 'admin' && u.status === 'ativo');
+  if (targetUser.cargo === 'admin' && allAdmins.length <= 1) {
+    return false;
+  }
+  return true;
+};
+

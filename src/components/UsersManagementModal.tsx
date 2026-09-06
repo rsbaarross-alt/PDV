@@ -31,6 +31,9 @@ import {
   toggleSystemUserStatus,
   disconnectUserSession,
   subscribeUsersChange,
+  isAdminRole,
+  canAccessUserManagement,
+  canDeleteUser,
 } from '../services/userService';
 
 interface UsersManagementModalProps {
@@ -140,8 +143,16 @@ export const UsersManagementModal: React.FC<UsersManagementModalProps> = ({
     });
   }, [users, activeTab, filterRole, searchQuery]);
 
+  const currentOperatorRole: UserRole = currentSession?.operador.cargo || 'operador';
+  const isCurrentUserAdmin = currentOperatorRole === 'admin';
+  const isCurrentUserGerenteOrAdmin = currentOperatorRole === 'admin' || currentOperatorRole === 'gerente';
+
   // Abertura do modal de criação
   const handleOpenCreateModal = () => {
+    if (!isCurrentUserGerenteOrAdmin) {
+      showNotice('Apenas Administradores e Gerentes podem cadastrar novos usuários.', 'error');
+      return;
+    }
     setEditingUser(null);
     setFormNome('');
     setFormEmail('');
@@ -156,6 +167,15 @@ export const UsersManagementModal: React.FC<UsersManagementModalProps> = ({
 
   // Abertura do modal de edição
   const handleOpenEditModal = (user: SystemUser) => {
+    if (!isCurrentUserGerenteOrAdmin) {
+      showNotice('Apenas Administradores e Gerentes podem editar dados de usuários.', 'error');
+      return;
+    }
+    // Apenas admin pode editar outro admin
+    if (user.cargo === 'admin' && !isCurrentUserAdmin) {
+      showNotice('Apenas o Administrador Geral pode editar contas administrativas.', 'error');
+      return;
+    }
     setEditingUser(user);
     setFormNome(user.nome);
     setFormEmail(user.email);
@@ -172,6 +192,17 @@ export const UsersManagementModal: React.FC<UsersManagementModalProps> = ({
   const handleSaveUser = (e: React.FormEvent) => {
     e.preventDefault();
     setFormError(null);
+
+    if (!isCurrentUserGerenteOrAdmin) {
+      setFormError('Permissão negada. Apenas Administradores e Gerentes podem salvar alterações.');
+      return;
+    }
+
+    // Se estiver tentando criar ou alterar para admin sem ser admin
+    if (formCargo === 'admin' && !isCurrentUserAdmin) {
+      setFormError('Apenas o Administrador Geral pode conceder perfil Administrador.');
+      return;
+    }
 
     const cleanNome = formNome.trim();
     const cleanEmail = formEmail.trim().toLowerCase();
@@ -218,6 +249,16 @@ export const UsersManagementModal: React.FC<UsersManagementModalProps> = ({
 
   // Alternar Status: Manter Ativo ou Inativar
   const handleToggleStatus = (user: SystemUser) => {
+    if (!isCurrentUserGerenteOrAdmin) {
+      showNotice('Apenas Administradores e Gerentes podem ativar ou inativar usuários.', 'error');
+      return;
+    }
+
+    if (user.cargo === 'admin' && !isCurrentUserAdmin) {
+      showNotice('Apenas o Administrador Geral pode alterar o status de outro administrador.', 'error');
+      return;
+    }
+
     const newStatus: UserStatus = user.status === 'ativo' ? 'inativo' : 'ativo';
     toggleSystemUserStatus(user.id, newStatus);
     showNotice(
@@ -240,6 +281,11 @@ export const UsersManagementModal: React.FC<UsersManagementModalProps> = ({
 
   // Desconectar Sessão Ativa
   const handleDisconnectSession = (user: SystemUser) => {
+    if (!isCurrentUserGerenteOrAdmin) {
+      showNotice('Apenas Administradores e Gerentes podem desconectar sessões ativas.', 'error');
+      return;
+    }
+
     disconnectUserSession(user.id);
     showNotice(`Sessão de "${user.nome}" desconectada com sucesso.`, 'success');
 
@@ -254,6 +300,18 @@ export const UsersManagementModal: React.FC<UsersManagementModalProps> = ({
   // Excluir Usuário (CRUD - Delete)
   const handleConfirmDelete = () => {
     if (!deletingUser) return;
+
+    if (!isCurrentUserAdmin) {
+      showNotice('Acesso negado: Apenas o Administrador Geral pode remover usuários do sistema.', 'error');
+      setDeletingUser(null);
+      return;
+    }
+
+    if (!canDeleteUser(currentOperatorRole, deletingUser)) {
+      showNotice('Não é permitido remover o único Administrador ativo do sistema.', 'error');
+      setDeletingUser(null);
+      return;
+    }
 
     const res = deleteSystemUser(deletingUser.id);
     if (!res.success) {
@@ -468,9 +526,10 @@ export const UsersManagementModal: React.FC<UsersManagementModalProps> = ({
               className="py-1.5 px-3 rounded-xl border border-slate-300 bg-white text-slate-700 text-xs font-medium focus:ring-2 focus:ring-[#1D4ED8] outline-none cursor-pointer"
             >
               <option value="todos">Todos os Cargos</option>
-              <option value="operador">Operadores</option>
-              <option value="supervisor">Supervisores</option>
+              <option value="admin">Administrador (Total)</option>
               <option value="gerente">Gerentes</option>
+              <option value="supervisor">Supervisores</option>
+              <option value="operador">Operadores</option>
             </select>
 
             <button
@@ -544,15 +603,17 @@ export const UsersManagementModal: React.FC<UsersManagementModalProps> = ({
 
                         <div className="flex items-center gap-2 mt-1.5">
                           <span
-                            className={`px-2 py-0.5 rounded text-[11px] font-semibold capitalize border ${
-                              user.cargo === 'gerente'
-                                ? 'bg-purple-50 text-purple-700 border-purple-200'
+                            className={`px-2 py-0.5 rounded text-[11px] capitalize border ${
+                              user.cargo === 'admin'
+                                ? 'bg-rose-50 text-rose-700 border-rose-300 font-bold'
+                                : user.cargo === 'gerente'
+                                ? 'bg-purple-50 text-purple-700 border-purple-200 font-semibold'
                                 : user.cargo === 'supervisor'
-                                ? 'bg-amber-50 text-amber-700 border-amber-200'
-                                : 'bg-slate-100 text-slate-700 border-slate-200'
+                                ? 'bg-amber-50 text-amber-700 border-amber-200 font-semibold'
+                                : 'bg-slate-100 text-slate-700 border-slate-200 font-semibold'
                             }`}
                           >
-                            {user.cargo}
+                            {user.cargo === 'admin' ? 'Administrador (Total)' : user.cargo}
                           </span>
 
                           <span className="text-[11px] text-slate-400">
@@ -777,9 +838,10 @@ export const UsersManagementModal: React.FC<UsersManagementModalProps> = ({
                     onChange={(e) => setFormCargo(e.target.value as UserRole)}
                     className="w-full px-3 py-2 rounded-xl border border-slate-300 text-slate-900 text-xs font-semibold focus:ring-2 focus:ring-[#1D4ED8] outline-none bg-white cursor-pointer"
                   >
-                    <option value="operador">Operador de Caixa</option>
-                    <option value="supervisor">Supervisor de Loja</option>
+                    <option value="admin">Administrador (Acesso Total)</option>
                     <option value="gerente">Gerente Geral</option>
+                    <option value="supervisor">Supervisor de Loja</option>
+                    <option value="operador">Operador de Caixa</option>
                   </select>
                 </div>
 

@@ -50,10 +50,28 @@ CREATE TABLE IF NOT EXISTS sale_items (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- 4. TABELA DE USUÁRIOS E CONTROLE DE ACESSO (RBAC)
+CREATE TABLE IF NOT EXISTS users (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  matricula VARCHAR(32) NOT NULL UNIQUE,
+  nome VARCHAR(255) NOT NULL,
+  email VARCHAR(255) NOT NULL UNIQUE,
+  senha VARCHAR(255) NOT NULL,
+  cargo VARCHAR(32) NOT NULL DEFAULT 'operador' CHECK (cargo IN ('admin', 'gerente', 'supervisor', 'operador')),
+  status VARCHAR(20) NOT NULL DEFAULT 'ativo' CHECK (status IN ('ativo', 'inativo')),
+  avatar_cor VARCHAR(32) DEFAULT '#1D4ED8',
+  esta_conectado BOOLEAN DEFAULT false,
+  terminal_conectado VARCHAR(64),
+  ultimo_acesso TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- Habilitar Row Level Security (RLS)
 ALTER TABLE products ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sales ENABLE ROW LEVEL SECURITY;
 ALTER TABLE sale_items ENABLE ROW LEVEL SECURITY;
+ALTER TABLE users ENABLE ROW LEVEL SECURITY;
 
 -- Políticas de acesso público para operação do PDV (permitir leitura e inserção)
 CREATE POLICY IF NOT EXISTS "Permitir leitura de produtos para todos" ON products
@@ -74,7 +92,25 @@ CREATE POLICY IF NOT EXISTS "Permitir inserção de itens de venda" ON sale_item
 CREATE POLICY IF NOT EXISTS "Permitir leitura de itens de venda" ON sale_items
   FOR SELECT USING (true);
 
--- 4. CARGA INICIAL DE PRODUTOS DO PDV
+CREATE POLICY IF NOT EXISTS "Permitir leitura de usuários" ON users
+  FOR SELECT USING (true);
+
+CREATE POLICY IF NOT EXISTS "Permitir gerenciamento de usuários" ON users
+  FOR ALL USING (true);
+
+-- 5. CARGA INICIAL DE USUÁRIOS (ADMIN E OPERADORES)
+INSERT INTO users (matricula, nome, email, senha, cargo, status, avatar_cor, esta_conectado)
+VALUES
+  ('2002', 'Mariana Costa', 'admin@supermercado.com', 'admin', 'admin', 'ativo', '#7C3AED', false),
+  ('1001', 'Carlos Silva', 'carlos.silva@supermercado.com', '1234', 'operador', 'ativo', '#1D4ED8', true),
+  ('1003', 'Lucas Mendes', 'lucas.mendes@supermercado.com', '1234', 'operador', 'ativo', '#059669', false),
+  ('1004', 'Ana Beatriz', 'ana.beatriz@supermercado.com', '1234', 'supervisor', 'ativo', '#D97706', false)
+ON CONFLICT (email) DO UPDATE
+SET
+  cargo = EXCLUDED.cargo,
+  status = EXCLUDED.status;
+
+-- 6. CARGA INICIAL DE PRODUTOS DO PDV
 INSERT INTO products (codigo, nome, preco, categoria, estoque, unidade, icone, favorito)
 VALUES
   ('7891000', 'Coca-Cola 2 Litros', 9.49, 'Bebidas', 48, 'un', 'Wine', true),

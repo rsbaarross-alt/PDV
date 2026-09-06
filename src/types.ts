@@ -36,8 +36,19 @@ export interface PaymentMethodOption {
   descricao: string;
 }
 
-export type UserRole = 'operador' | 'supervisor' | 'gerente';
+export type UserRole = 'admin' | 'gerente' | 'supervisor' | 'operador';
 export type UserStatus = 'ativo' | 'inativo';
+
+export interface RolePermissions {
+  canAccessAdmin: boolean;
+  canManageUsers: boolean;
+  canDeleteUsers: boolean;
+  canManageProducts: boolean;
+  canAuthorizeDiscounts: boolean;
+  canCancelSales: boolean;
+  canOperatePDV: boolean;
+  canViewReports: boolean;
+}
 
 export interface SystemUser {
   id: string;

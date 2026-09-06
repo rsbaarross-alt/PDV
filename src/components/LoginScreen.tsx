@@ -373,6 +373,51 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                   </label>
                 </div>
 
+                {/* Acesso Rápido para Testes e Auditoria */}
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="font-bold text-slate-700">Acesso Rápido:</span>
+                    <span className="text-[10px] text-slate-400">Clique para preencher</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEmail('admin@supermercado.com');
+                        setSenha('admin');
+                      }}
+                      className={`p-2 rounded-lg text-left border transition-all cursor-pointer ${
+                        email === 'admin@supermercado.com'
+                          ? 'bg-purple-50 border-purple-300 text-purple-900 font-bold'
+                          : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      <div className="font-bold text-[11px] text-purple-700 flex items-center gap-1">
+                        <span>👑 Administrador</span>
+                      </div>
+                      <div className="text-[10px] text-slate-500 truncate">Mariana Costa</div>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEmail('carlos.silva@supermercado.com');
+                        setSenha('1234');
+                      }}
+                      className={`p-2 rounded-lg text-left border transition-all cursor-pointer ${
+                        email === 'carlos.silva@supermercado.com'
+                          ? 'bg-blue-50 border-blue-300 text-blue-900 font-bold'
+                          : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-100'
+                      }`}
+                    >
+                      <div className="font-bold text-[11px] text-blue-700 flex items-center gap-1">
+                        <span>🛒 Operador Caixa</span>
+                      </div>
+                      <div className="text-[10px] text-slate-500 truncate">Carlos Silva</div>
+                    </button>
+                  </div>
+                </div>
+
                 <button
                   type="submit"
                   disabled={isLoading}
