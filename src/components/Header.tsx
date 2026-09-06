@@ -3,8 +3,8 @@
  * Logo PDV | Busca Inteligente (F3) | Info Operador & Relógio
  */
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, ShoppingBag, Clock, User, Monitor, X, ArrowDown, ArrowUp, CornerDownLeft, Sparkles, Database } from 'lucide-react';
-import { Product } from '../types';
+import { Search, ShoppingBag, Clock, User, Monitor, X, ArrowDown, ArrowUp, CornerDownLeft, Sparkles, Database, LogOut, ChevronDown, ShieldCheck } from 'lucide-react';
+import { Product, SessionInfo } from '../types';
 import { fuzzySearchProducts, SearchMatchResult } from '../utils/fuzzySearch';
 import { formatBRL } from '../utils/formatters';
 import { SupabaseStatus } from '../services/api';
@@ -19,6 +19,8 @@ interface HeaderProps {
   onOpenShortcuts: () => void;
   supabaseStatus: SupabaseStatus;
   onOpenSupabaseInfo: () => void;
+  session: SessionInfo | null;
+  onLogout: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -31,12 +33,27 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenShortcuts,
   supabaseStatus,
   onOpenSupabaseInfo,
+  session,
+  onLogout,
 }) => {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [isFocused, setIsFocused] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState<number>(-1);
   const [searchResults, setSearchResults] = useState<SearchMatchResult[]>([]);
+  const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const userMenuRef = useRef<HTMLDivElement>(null);
+
+  // Fecha dropdown do usuário ao clicar fora
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (userMenuRef.current && !userMenuRef.current.contains(event.target as Node)) {
+        setIsUserMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   // Relógio em tempo real
   useEffect(() => {
@@ -316,26 +333,95 @@ export const Header: React.FC<HeaderProps> = ({
 
         <div className="h-8 w-px bg-slate-200"></div>
 
-        <div className="flex items-center gap-3">
-          <div className="flex flex-col">
-            <div className="flex items-center justify-end gap-1.5">
-              <User size={13} className="text-[#64748B]" />
-              <span className="text-[13px] font-semibold text-[#1E293B]">
-                Carlos Silva
-              </span>
+        {/* Informações do Operador & Menu de Sessão */}
+        <div className="relative" ref={userMenuRef}>
+          <button
+            type="button"
+            onClick={() => setIsUserMenuOpen(!isUserMenuOpen)}
+            className="flex items-center gap-2 p-1.5 rounded-xl hover:bg-slate-100 transition-all text-left cursor-pointer border border-transparent hover:border-slate-200"
+            title="Clique para opções de operador e caixa"
+          >
+            <div
+              className="w-8 h-8 rounded-lg flex items-center justify-center font-bold text-xs text-white shadow-xs shrink-0"
+              style={{ backgroundColor: session?.operador.avatarCor || '#1E40AF' }}
+            >
+              {session?.operador.nome.charAt(0) || 'O'}
             </div>
-            <div className="flex items-center justify-end gap-2 text-[12px] text-[#64748B]">
-              <span className="flex items-center gap-1">
-                <Monitor size={12} />
-                Caixa 04
-              </span>
-              <span>•</span>
-              <span className="flex items-center gap-1 font-mono font-medium text-slate-700">
-                <Clock size={12} className="text-slate-400" />
-                {currentTime.toLocaleTimeString('pt-BR')}
-              </span>
+
+            <div className="flex flex-col">
+              <div className="flex items-center justify-end gap-1.5">
+                <span className="text-[13px] font-semibold text-slate-800 leading-tight">
+                  {session?.operador.nome || 'Carlos Silva'}
+                </span>
+                <ChevronDown size={13} className="text-slate-400" />
+              </div>
+              <div className="flex items-center justify-end gap-1.5 text-[11px] text-slate-500">
+                <span className="flex items-center gap-1 font-medium">
+                  <Monitor size={11} />
+                  {session?.caixa || 'Caixa 04'}
+                </span>
+                <span>•</span>
+                <span className="flex items-center gap-1 font-mono font-medium text-slate-700">
+                  <Clock size={11} className="text-slate-400" />
+                  {currentTime.toLocaleTimeString('pt-BR')}
+                </span>
+              </div>
             </div>
-          </div>
+          </button>
+
+          {/* Dropdown do Operador */}
+          {isUserMenuOpen && (
+            <div className="absolute right-0 mt-2 w-64 bg-white rounded-2xl border border-slate-200 shadow-xl py-2 z-50 animate-slide-down">
+              <div className="px-4 py-2.5 border-b border-slate-100">
+                <div className="flex items-center gap-2.5 mb-1.5">
+                  <div
+                    className="w-9 h-9 rounded-xl flex items-center justify-center font-bold text-sm text-white"
+                    style={{ backgroundColor: session?.operador.avatarCor || '#1E40AF' }}
+                  >
+                    {session?.operador.nome.charAt(0) || 'O'}
+                  </div>
+                  <div>
+                    <p className="text-[13px] font-bold text-slate-900 leading-tight">
+                      {session?.operador.nome || 'Carlos Silva'}
+                    </p>
+                    <p className="text-[11px] text-slate-500">
+                      Matrícula: {session?.operador.matricula || '1001'}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between text-[11px] font-medium pt-1">
+                  <span className="px-2 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200 capitalize">
+                    {session?.operador.cargo || 'operador'}
+                  </span>
+                  <span className="text-slate-500">
+                    {session?.caixa || 'Caixa 04'}
+                  </span>
+                </div>
+                {session?.fundoTrocoInicial !== undefined && (
+                  <div className="mt-2 text-[11px] text-slate-500 bg-slate-50 p-1.5 rounded-lg border border-slate-100 flex justify-between">
+                    <span>Fundo inicial:</span>
+                    <span className="font-bold text-emerald-700">
+                      {formatBRL(session.fundoTrocoInicial)}
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              <div className="p-1.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsUserMenuOpen(false);
+                    onLogout();
+                  }}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-[13px] font-semibold text-rose-600 hover:bg-rose-50 rounded-xl transition-all cursor-pointer"
+                >
+                  <LogOut size={15} />
+                  <span>Trocar Operador / Sair</span>
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </header>

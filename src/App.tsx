@@ -4,7 +4,7 @@
  * Layout Master: Zona A (Header), Zona B (Catálogo 60%), Zona C (Carrinho 40%), Zona D (Total 80px)
  */
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Product, CartItem, PaymentMethodType } from './types';
+import { Product, CartItem, PaymentMethodType, SessionInfo } from './types';
 import { MOCK_PRODUTOS } from './data/mockProducts';
 import { Header } from './components/Header';
 import { Catalog } from './components/Catalog';
@@ -15,10 +15,23 @@ import { ConsultPriceModal } from './components/ConsultPriceModal';
 import { CancelSaleModal } from './components/CancelSaleModal';
 import { ShortcutsHelpModal } from './components/ShortcutsHelpModal';
 import { SupabaseInfoModal } from './components/SupabaseInfoModal';
+import { LoginScreen } from './components/LoginScreen';
 import { checkSupabaseStatus, fetchProducts, registerSale, SupabaseStatus } from './services/api';
 import { CheckCircle } from 'lucide-react';
 
 export default function App() {
+  const [session, setSession] = useState<SessionInfo | null>(() => {
+    try {
+      const saved = localStorage.getItem('pdv_last_session');
+      if (saved) {
+        return JSON.parse(saved);
+      }
+    } catch {
+      // Ignora erro de parse
+    }
+    return null;
+  });
+
   const [products, setProducts] = useState<Product[]>(MOCK_PRODUTOS);
   const [supabaseStatus, setSupabaseStatus] = useState<SupabaseStatus>({
     configured: false,
@@ -225,6 +238,21 @@ export default function App() {
     showToast('Venda cancelada.');
   };
 
+  const handleLoginSuccess = (newSession: SessionInfo) => {
+    setSession(newSession);
+    showToast(`Caixa aberto com sucesso! Operador: ${newSession.operador.nome}`);
+  };
+
+  const handleLogout = () => {
+    setSession(null);
+    try {
+      localStorage.removeItem('pdv_last_session');
+    } catch {
+      // Ignora erro de storage
+    }
+    showToast('Sessão encerrada.');
+  };
+
   // Finalizar venda com sucesso
   const handleConfirmSale = async (method: PaymentMethodType, received: number, change: number) => {
     const salePayload = {
@@ -236,8 +264,8 @@ export default function App() {
       metodoPagamento: method,
       valorRecebido: received,
       troco: change,
-      operador: 'Carlos Silva',
-      caixa: 'Caixa 04',
+      operador: session?.operador.nome || 'Carlos Silva',
+      caixa: session?.caixa || 'Caixa 04',
     };
 
     // Limpa a venda após pagamento
@@ -305,6 +333,16 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
   }, [cartItems, showToast]);
 
+  if (!session) {
+    return (
+      <LoginScreen
+        onLoginSuccess={handleLoginSuccess}
+        supabaseStatus={supabaseStatus}
+        initialTerminal="Caixa 04"
+      />
+    );
+  }
+
   return (
     <div className="h-screen w-screen flex flex-col bg-white overflow-hidden select-none font-['Inter',sans-serif]">
       {/* Notificação / Toast de Acessibilidade */}
@@ -330,6 +368,8 @@ export default function App() {
         onOpenShortcuts={() => setIsShortcutsOpen(true)}
         supabaseStatus={supabaseStatus}
         onOpenSupabaseInfo={() => setIsSupabaseModalOpen(true)}
+        session={session}
+        onLogout={handleLogout}
       />
 
       {/* ÁREA CENTRAL: ZONA B (CATÁLOGO 60%) + ZONA C (CARRINHO 40%) */}

@@ -36,6 +36,22 @@ export interface PaymentMethodOption {
   descricao: string;
 }
 
+export interface Operator {
+  id: string;
+  matricula: string;
+  nome: string;
+  email: string;
+  cargo: 'operador' | 'supervisor' | 'gerente';
+  avatarCor: string;
+}
+
+export interface SessionInfo {
+  operador: Operator;
+  caixa: string;
+  fundoTrocoInicial: number;
+  dataAbertura: string;
+}
+
 export interface SaleSummary {
   id: string;
   dataHora: Date;
