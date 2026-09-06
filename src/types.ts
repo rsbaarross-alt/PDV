@@ -36,12 +36,31 @@ export interface PaymentMethodOption {
   descricao: string;
 }
 
+export type UserRole = 'operador' | 'supervisor' | 'gerente';
+export type UserStatus = 'ativo' | 'inativo';
+
+export interface SystemUser {
+  id: string;
+  matricula: string;
+  nome: string;
+  email: string;
+  senha: string;
+  cargo: UserRole;
+  status: UserStatus;
+  avatarCor: string;
+  criadoEm: string;
+  ultimoAcesso?: string;
+  estaConectado?: boolean;
+  terminalConectado?: string;
+  ipOuDispositivo?: string;
+}
+
 export interface Operator {
   id: string;
   matricula: string;
   nome: string;
   email: string;
-  cargo: 'operador' | 'supervisor' | 'gerente';
+  cargo: UserRole;
   avatarCor: string;
 }
 

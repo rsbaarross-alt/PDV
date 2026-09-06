@@ -15,6 +15,11 @@ import {
 } from 'lucide-react';
 import { Operator, SessionInfo } from '../types';
 import { SupabaseStatus } from '../services/api';
+import {
+  getSystemUsers,
+  saveSystemUser,
+  registerUserLogin,
+} from '../services/userService';
 
 interface LoginScreenProps {
   onLoginSuccess: (session: SessionInfo) => void;
@@ -23,34 +28,6 @@ interface LoginScreenProps {
 }
 
 type AuthView = 'login' | 'register' | 'recovery';
-
-interface StoredUser {
-  nome: string;
-  email: string;
-  senha: string;
-  cargo: 'operador' | 'supervisor' | 'gerente';
-}
-
-const DEFAULT_USERS: StoredUser[] = [
-  {
-    nome: 'Carlos Silva',
-    email: 'carlos.silva@supermercado.com',
-    senha: '1234',
-    cargo: 'operador',
-  },
-  {
-    nome: 'Mariana Costa',
-    email: 'admin@supermercado.com',
-    senha: 'admin',
-    cargo: 'gerente',
-  },
-  {
-    nome: 'Operador Caixa',
-    email: 'operador@pdv.com',
-    senha: '1234',
-    cargo: 'operador',
-  },
-];
 
 export const LoginScreen: React.FC<LoginScreenProps> = ({
   onLoginSuccess,
@@ -96,27 +73,6 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
     setErrorMsg(null);
   }, [view]);
 
-  // Carrega lista de usuários locais (ou default)
-  const getUsers = (): StoredUser[] => {
-    try {
-      const stored = localStorage.getItem('pdv_registered_users');
-      if (stored) {
-        return JSON.parse(stored);
-      }
-    } catch {
-      // Ignora erro
-    }
-    return DEFAULT_USERS;
-  };
-
-  const saveUsers = (users: StoredUser[]) => {
-    try {
-      localStorage.setItem('pdv_registered_users', JSON.stringify(users));
-    } catch {
-      // Ignora erro
-    }
-  };
-
   // 1. SUBMIT: LOGIN
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
@@ -139,23 +95,32 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
     setIsLoading(true);
 
     setTimeout(() => {
-      const users = getUsers();
+      const users = getSystemUsers();
       const user = users.find((u) => u.email.toLowerCase() === cleanEmail);
 
       if (user) {
+        if (user.status === 'inativo') {
+          setIsLoading(false);
+          setErrorMsg('Este usuário está inativo no sistema. Contate o administrador.');
+          return;
+        }
+
         if (user.senha !== cleanSenha) {
           setIsLoading(false);
           setErrorMsg('Senha incorreta para o e-mail informado.');
           return;
         }
 
+        // Conecta e marca a sessão como ativa
+        registerUserLogin(user.email, initialTerminal);
+
         const operator: Operator = {
-          id: `op-${Date.now()}`,
-          matricula: '1001',
+          id: user.id,
+          matricula: user.matricula,
           nome: user.nome,
           email: user.email,
           cargo: user.cargo,
-          avatarCor: '#1D4ED8',
+          avatarCor: user.avatarCor || '#1D4ED8',
         };
 
         const session: SessionInfo = {
@@ -176,39 +141,9 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
         setIsLoading(false);
         onLoginSuccess(session);
       } else {
-        // Se o usuário ainda não existir no cadastro local, cria uma sessão amigável
-        const nameFromEmail = cleanEmail.split('@')[0].replace(/[._-]/g, ' ');
-        const formattedName = nameFromEmail
-          .split(' ')
-          .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-          .join(' ');
-
-        const operator: Operator = {
-          id: `op-${Date.now()}`,
-          matricula: '1001',
-          nome: formattedName || 'Operador',
-          email: cleanEmail,
-          cargo: 'operador',
-          avatarCor: '#1D4ED8',
-        };
-
-        const session: SessionInfo = {
-          operador: operator,
-          caixa: initialTerminal,
-          fundoTrocoInicial: 100,
-          dataAbertura: new Date().toISOString(),
-        };
-
-        if (lembrarMe) {
-          try {
-            localStorage.setItem('pdv_last_session', JSON.stringify(session));
-          } catch {
-            // Ignora erro
-          }
-        }
-
+        // Usuário não cadastrado ainda
         setIsLoading(false);
-        onLoginSuccess(session);
+        setErrorMsg('Usuário não encontrado. Cadastre uma senha ou verifique o e-mail digitado.');
       }
     }, 450);
   };
@@ -247,28 +182,24 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
     setIsLoading(true);
 
     setTimeout(() => {
-      const users = getUsers();
-      const existing = users.find((u) => u.email.toLowerCase() === cleanEmail);
+      const res = saveSystemUser({
+        nome: cleanNome,
+        email: cleanEmail,
+        senha: cleanSenha,
+        cargo: 'operador',
+        status: 'ativo',
+      });
 
-      if (existing) {
-        // Atualiza a senha se já existir
-        existing.senha = cleanSenha;
-        existing.nome = cleanNome;
-        saveUsers(users);
-      } else {
-        users.push({
-          nome: cleanNome,
-          email: cleanEmail,
-          senha: cleanSenha,
-          cargo: 'operador',
-        });
-        saveUsers(users);
+      if (!res.success) {
+        setIsLoading(false);
+        setErrorMsg(res.message || 'Erro ao cadastrar senha.');
+        return;
       }
 
       setIsLoading(false);
       setEmail(cleanEmail);
       setSenha(cleanSenha);
-      setSuccessMsg('Senha e conta cadastradas com sucesso! Faça login com seus dados.');
+      setSuccessMsg('Senha cadastrada com sucesso! Faça login com suas novas credenciais.');
       setView('login');
     }, 500);
   };

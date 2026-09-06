@@ -16,7 +16,9 @@ import { CancelSaleModal } from './components/CancelSaleModal';
 import { ShortcutsHelpModal } from './components/ShortcutsHelpModal';
 import { SupabaseInfoModal } from './components/SupabaseInfoModal';
 import { LoginScreen } from './components/LoginScreen';
+import { UsersManagementModal } from './components/UsersManagementModal';
 import { checkSupabaseStatus, fetchProducts, registerSale, SupabaseStatus } from './services/api';
+import { registerUserLogout } from './services/userService';
 import { CheckCircle } from 'lucide-react';
 
 export default function App() {
@@ -70,6 +72,7 @@ export default function App() {
   const [isConsultOpen, setIsConsultOpen] = useState<boolean>(false);
   const [isCancelOpen, setIsCancelOpen] = useState<boolean>(false);
   const [isShortcutsOpen, setIsShortcutsOpen] = useState<boolean>(false);
+  const [isUsersModalOpen, setIsUsersModalOpen] = useState<boolean>(false);
 
   // Busca e feedback
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -244,7 +247,11 @@ export default function App() {
   };
 
   const handleLogout = () => {
+    if (session?.operador.email) {
+      registerUserLogout(session.operador.email);
+    }
     setSession(null);
+    setIsUsersModalOpen(false);
     try {
       localStorage.removeItem('pdv_last_session');
     } catch {
@@ -327,6 +334,13 @@ export default function App() {
         setIsConsultOpen(true);
         return;
       }
+
+      // F7: Gestão de Usuários
+      if (e.key === 'F7') {
+        e.preventDefault();
+        setIsUsersModalOpen(true);
+        return;
+      }
     };
 
     window.addEventListener('keydown', handleGlobalKeyDown);
@@ -370,6 +384,7 @@ export default function App() {
         onOpenSupabaseInfo={() => setIsSupabaseModalOpen(true)}
         session={session}
         onLogout={handleLogout}
+        onOpenUsersManagement={() => setIsUsersModalOpen(true)}
       />
 
       {/* ÁREA CENTRAL: ZONA B (CATÁLOGO 60%) + ZONA C (CARRINHO 40%) */}
@@ -446,6 +461,14 @@ export default function App() {
         status={supabaseStatus}
         onRefresh={loadInitialData}
         isRefreshing={isTestingSupabase}
+      />
+
+      {/* MODAL DE GESTÃO DE USUÁRIOS & CONTROLE DE ACESSO (CRUD) */}
+      <UsersManagementModal
+        isOpen={isUsersModalOpen}
+        onClose={() => setIsUsersModalOpen(false)}
+        currentSession={session}
+        onSessionTerminated={handleLogout}
       />
     </div>
   );

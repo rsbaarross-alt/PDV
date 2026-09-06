@@ -3,11 +3,12 @@
  * Logo PDV | Busca Inteligente (F3) | Info Operador & Relógio
  */
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, ShoppingBag, Clock, User, Monitor, X, ArrowDown, ArrowUp, CornerDownLeft, Sparkles, Database, LogOut, ChevronDown, ShieldCheck } from 'lucide-react';
+import { Search, ShoppingBag, Clock, User, Monitor, X, ArrowDown, ArrowUp, CornerDownLeft, Sparkles, Database, LogOut, ChevronDown, ShieldCheck, Users } from 'lucide-react';
 import { Product, SessionInfo } from '../types';
 import { fuzzySearchProducts, SearchMatchResult } from '../utils/fuzzySearch';
 import { formatBRL } from '../utils/formatters';
 import { SupabaseStatus } from '../services/api';
+import { getUserMetrics, subscribeUsersChange } from '../services/userService';
 
 interface HeaderProps {
   products: Product[];
@@ -21,6 +22,7 @@ interface HeaderProps {
   onOpenSupabaseInfo: () => void;
   session: SessionInfo | null;
   onLogout: () => void;
+  onOpenUsersManagement: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -35,14 +37,24 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenSupabaseInfo,
   session,
   onLogout,
+  onOpenUsersManagement,
 }) => {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [isFocused, setIsFocused] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState<number>(-1);
   const [searchResults, setSearchResults] = useState<SearchMatchResult[]>([]);
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false);
+  const [userMetrics, setUserMetrics] = useState(getUserMetrics());
   const dropdownRef = useRef<HTMLDivElement>(null);
   const userMenuRef = useRef<HTMLDivElement>(null);
+
+  // Subscreve a atualizações na base de usuários/sessões
+  useEffect(() => {
+    const unsub = subscribeUsersChange(() => {
+      setUserMetrics(getUserMetrics());
+    });
+    return () => unsub();
+  }, []);
 
   // Fecha dropdown do usuário ao clicar fora
   useEffect(() => {
@@ -331,6 +343,21 @@ export const Header: React.FC<HeaderProps> = ({
           </kbd>
         </button>
 
+        {/* Botão de Gestão de Usuários & Sessões */}
+        <button
+          type="button"
+          onClick={onOpenUsersManagement}
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-slate-200 bg-slate-50/80 hover:bg-blue-50/70 hover:border-blue-300 text-slate-700 hover:text-[#1D4ED8] text-[12px] font-semibold transition-all cursor-pointer shadow-2xs"
+          title="Controle de Usuários e Sessões Conectadas"
+        >
+          <Users size={14} className="text-[#1D4ED8]" />
+          <span className="hidden sm:inline">Usuários</span>
+          <span className="flex items-center gap-1 px-1.5 py-0.2 rounded-full text-[10px] font-bold bg-blue-100 text-blue-800 border border-blue-200">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            {userMetrics.conectados}
+          </span>
+        </button>
+
         <div className="h-8 w-px bg-slate-200"></div>
 
         {/* Informações do Operador & Menu de Sessão */}
@@ -407,7 +434,26 @@ export const Header: React.FC<HeaderProps> = ({
                 )}
               </div>
 
-              <div className="p-1.5">
+              <div className="p-1.5 space-y-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsUserMenuOpen(false);
+                    onOpenUsersManagement();
+                  }}
+                  className="w-full flex items-center justify-between px-3 py-2 text-[13px] font-semibold text-slate-700 hover:bg-blue-50 hover:text-[#1D4ED8] rounded-xl transition-all cursor-pointer"
+                >
+                  <div className="flex items-center gap-2">
+                    <Users size={15} className="text-[#1D4ED8]" />
+                    <span>Gestão de Usuários</span>
+                  </div>
+                  <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200">
+                    {userMetrics.conectados} online
+                  </span>
+                </button>
+
+                <div className="h-px bg-slate-100 my-1"></div>
+
                 <button
                   type="button"
                   onClick={() => {
