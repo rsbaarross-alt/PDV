@@ -1,26 +1,20 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Lock,
-  User,
-  Monitor,
+  Mail,
   Eye,
   EyeOff,
   ShoppingBag,
-  Database,
-  Clock,
-  Calendar,
+  ArrowLeft,
+  CheckCircle2,
   AlertCircle,
   LogIn,
+  UserPlus,
   KeyRound,
-  DollarSign,
-  ShieldCheck,
-  Sparkles,
-  Delete,
+  User,
 } from 'lucide-react';
 import { Operator, SessionInfo } from '../types';
-import { MOCK_OPERATORS, AVAILABLE_TERMINALS, OperatorCredential } from '../data/mockOperators';
 import { SupabaseStatus } from '../services/api';
-import { formatBRL } from '../utils/formatters';
 
 interface LoginScreenProps {
   onLoginSuccess: (session: SessionInfo) => void;
@@ -28,140 +22,280 @@ interface LoginScreenProps {
   initialTerminal?: string;
 }
 
+type AuthView = 'login' | 'register' | 'recovery';
+
+interface StoredUser {
+  nome: string;
+  email: string;
+  senha: string;
+  cargo: 'operador' | 'supervisor' | 'gerente';
+}
+
+const DEFAULT_USERS: StoredUser[] = [
+  {
+    nome: 'Carlos Silva',
+    email: 'carlos.silva@supermercado.com',
+    senha: '1234',
+    cargo: 'operador',
+  },
+  {
+    nome: 'Mariana Costa',
+    email: 'admin@supermercado.com',
+    senha: 'admin',
+    cargo: 'gerente',
+  },
+  {
+    nome: 'Operador Caixa',
+    email: 'operador@pdv.com',
+    senha: '1234',
+    cargo: 'operador',
+  },
+];
+
 export const LoginScreen: React.FC<LoginScreenProps> = ({
   onLoginSuccess,
   supabaseStatus,
   initialTerminal = 'Caixa 04',
 }) => {
-  const [identificador, setIdentificador] = useState<string>('1001');
+  const [view, setView] = useState<AuthView>('login');
+
+  // Campos de Login
+  const [email, setEmail] = useState<string>('carlos.silva@supermercado.com');
   const [senha, setSenha] = useState<string>('1234');
+  const [lembrarMe, setLembrarMe] = useState<boolean>(true);
   const [showPassword, setShowPassword] = useState<boolean>(false);
-  const [terminal, setTerminal] = useState<string>(initialTerminal);
-  const [fundoTroco, setFundoTroco] = useState<number>(100.00);
-  const [lembrarLogin, setLembrarLogin] = useState<boolean>(true);
-  const [loginMode, setLoginMode] = useState<'teclado' | 'pin'>('teclado');
+
+  // Campos de Cadastro de Senha / Conta
+  const [regNome, setRegNome] = useState<string>('');
+  const [regEmail, setRegEmail] = useState<string>('');
+  const [regSenha, setRegSenha] = useState<string>('');
+  const [regConfirmSenha, setRegConfirmSenha] = useState<string>('');
+  const [showRegPassword, setShowRegPassword] = useState<boolean>(false);
+
+  // Campos de Recuperação de Senha
+  const [recEmail, setRecEmail] = useState<string>('');
+  const [recSuccess, setRecSuccess] = useState<boolean>(false);
+
+  // Estados de feedback
   const [isLoading, setIsLoading] = useState<boolean>(false);
-  const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [currentTime, setCurrentTime] = useState<Date>(new Date());
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
-  const identificadorInputRef = useRef<HTMLInputElement>(null);
-  const senhaInputRef = useRef<HTMLInputElement>(null);
+  const emailInputRef = useRef<HTMLInputElement>(null);
+  const regNomeInputRef = useRef<HTMLInputElement>(null);
+  const recEmailInputRef = useRef<HTMLInputElement>(null);
 
-  // Relógio em tempo real
   useEffect(() => {
-    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
-    return () => clearInterval(timer);
-  }, []);
+    if (view === 'login') {
+      emailInputRef.current?.focus();
+    } else if (view === 'register') {
+      regNomeInputRef.current?.focus();
+    } else if (view === 'recovery') {
+      recEmailInputRef.current?.focus();
+    }
+    setErrorMsg(null);
+  }, [view]);
 
-  // Foca no campo de identificador ao carregar
-  useEffect(() => {
-    identificadorInputRef.current?.focus();
-  }, []);
+  // Carrega lista de usuários locais (ou default)
+  const getUsers = (): StoredUser[] => {
+    try {
+      const stored = localStorage.getItem('pdv_registered_users');
+      if (stored) {
+        return JSON.parse(stored);
+      }
+    } catch {
+      // Ignora erro
+    }
+    return DEFAULT_USERS;
+  };
 
-  const handleSelectQuickOperator = (op: OperatorCredential) => {
-    setIdentificador(op.matricula);
-    setSenha(op.senha);
-    setErrorMessage(null);
-    if (senhaInputRef.current) {
-      senhaInputRef.current.focus();
+  const saveUsers = (users: StoredUser[]) => {
+    try {
+      localStorage.setItem('pdv_registered_users', JSON.stringify(users));
+    } catch {
+      // Ignora erro
     }
   };
 
-  const handlePinInput = (num: string) => {
-    setErrorMessage(null);
-    setSenha((prev) => (prev.length < 8 ? prev + num : prev));
-  };
+  // 1. SUBMIT: LOGIN
+  const handleLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg(null);
+    setSuccessMsg(null);
 
-  const handlePinBackspace = () => {
-    setSenha((prev) => prev.slice(0, -1));
-  };
-
-  const handlePinClear = () => {
-    setSenha('');
-  };
-
-  const handleSubmit = (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    setErrorMessage(null);
-
-    const cleanIdentificador = identificador.trim().toLowerCase();
+    const cleanEmail = email.trim().toLowerCase();
     const cleanSenha = senha.trim();
 
-    if (!cleanIdentificador) {
-      setErrorMessage('Informe a matrícula, e-mail ou nome do operador.');
-      identificadorInputRef.current?.focus();
+    if (!cleanEmail) {
+      setErrorMsg('Por favor, informe seu e-mail.');
       return;
     }
 
     if (!cleanSenha) {
-      setErrorMessage('Digite a senha ou PIN de acesso.');
-      senhaInputRef.current?.focus();
+      setErrorMsg('Por favor, digite sua senha.');
       return;
     }
 
     setIsLoading(true);
 
-    // Simulação com validação contra credenciais ou operador livre
     setTimeout(() => {
-      // Procura operador cadastrado
-      const found = MOCK_OPERATORS.find(
-        (op) =>
-          op.matricula.toLowerCase() === cleanIdentificador ||
-          op.email.toLowerCase() === cleanIdentificador ||
-          op.nome.toLowerCase() === cleanIdentificador
-      );
+      const users = getUsers();
+      const user = users.find((u) => u.email.toLowerCase() === cleanEmail);
 
-      let loggedOperator: Operator;
-
-      if (found) {
-        if (found.senha !== cleanSenha && found.pin !== cleanSenha) {
+      if (user) {
+        if (user.senha !== cleanSenha) {
           setIsLoading(false);
-          setErrorMessage('Senha incorreta para o operador selecionado. Tente novamente.');
+          setErrorMsg('Senha incorreta para o e-mail informado.');
           return;
         }
-        loggedOperator = {
-          id: found.id,
-          matricula: found.matricula,
-          nome: found.nome,
-          email: found.email,
-          cargo: found.cargo,
-          avatarCor: found.avatarCor,
-        };
-      } else {
-        // Permite operador dinâmico caso seja digitado outro nome
-        loggedOperator = {
-          id: `op-custom-${Date.now()}`,
-          matricula: cleanIdentificador,
-          nome: cleanIdentificador.length <= 4 ? `Operador ${cleanIdentificador}` : cleanIdentificador,
-          email: `${cleanIdentificador}@pdv.local`,
-          cargo: 'operador',
-          avatarCor: '#2563EB',
-        };
-      }
 
-      const session: SessionInfo = {
-        operador: loggedOperator,
-        caixa: terminal,
-        fundoTrocoInicial: Number(fundoTroco) || 0,
-        dataAbertura: new Date().toISOString(),
-      };
+        const operator: Operator = {
+          id: `op-${Date.now()}`,
+          matricula: '1001',
+          nome: user.nome,
+          email: user.email,
+          cargo: user.cargo,
+          avatarCor: '#1D4ED8',
+        };
 
-      if (lembrarLogin) {
-        try {
-          localStorage.setItem('pdv_last_session', JSON.stringify(session));
-        } catch {
-          // LocalStorage desativado ou privado
+        const session: SessionInfo = {
+          operador: operator,
+          caixa: initialTerminal,
+          fundoTrocoInicial: 100,
+          dataAbertura: new Date().toISOString(),
+        };
+
+        if (lembrarMe) {
+          try {
+            localStorage.setItem('pdv_last_session', JSON.stringify(session));
+          } catch {
+            // Ignora erro
+          }
         }
+
+        setIsLoading(false);
+        onLoginSuccess(session);
+      } else {
+        // Se o usuário ainda não existir no cadastro local, cria uma sessão amigável
+        const nameFromEmail = cleanEmail.split('@')[0].replace(/[._-]/g, ' ');
+        const formattedName = nameFromEmail
+          .split(' ')
+          .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+          .join(' ');
+
+        const operator: Operator = {
+          id: `op-${Date.now()}`,
+          matricula: '1001',
+          nome: formattedName || 'Operador',
+          email: cleanEmail,
+          cargo: 'operador',
+          avatarCor: '#1D4ED8',
+        };
+
+        const session: SessionInfo = {
+          operador: operator,
+          caixa: initialTerminal,
+          fundoTrocoInicial: 100,
+          dataAbertura: new Date().toISOString(),
+        };
+
+        if (lembrarMe) {
+          try {
+            localStorage.setItem('pdv_last_session', JSON.stringify(session));
+          } catch {
+            // Ignora erro
+          }
+        }
+
+        setIsLoading(false);
+        onLoginSuccess(session);
+      }
+    }, 450);
+  };
+
+  // 2. SUBMIT: CADASTRO DE SENHA / CONTA
+  const handleRegister = (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg(null);
+    setSuccessMsg(null);
+
+    const cleanNome = regNome.trim();
+    const cleanEmail = regEmail.trim().toLowerCase();
+    const cleanSenha = regSenha.trim();
+    const cleanConfirm = regConfirmSenha.trim();
+
+    if (!cleanNome) {
+      setErrorMsg('Informe seu nome completo.');
+      return;
+    }
+
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      setErrorMsg('Informe um endereço de e-mail válido.');
+      return;
+    }
+
+    if (!cleanSenha || cleanSenha.length < 4) {
+      setErrorMsg('A senha deve conter no mínimo 4 caracteres.');
+      return;
+    }
+
+    if (cleanSenha !== cleanConfirm) {
+      setErrorMsg('As senhas não coincidem. Digite novamente.');
+      return;
+    }
+
+    setIsLoading(true);
+
+    setTimeout(() => {
+      const users = getUsers();
+      const existing = users.find((u) => u.email.toLowerCase() === cleanEmail);
+
+      if (existing) {
+        // Atualiza a senha se já existir
+        existing.senha = cleanSenha;
+        existing.nome = cleanNome;
+        saveUsers(users);
+      } else {
+        users.push({
+          nome: cleanNome,
+          email: cleanEmail,
+          senha: cleanSenha,
+          cargo: 'operador',
+        });
+        saveUsers(users);
       }
 
       setIsLoading(false);
-      onLoginSuccess(session);
-    }, 400);
+      setEmail(cleanEmail);
+      setSenha(cleanSenha);
+      setSuccessMsg('Senha e conta cadastradas com sucesso! Faça login com seus dados.');
+      setView('login');
+    }, 500);
+  };
+
+  // 3. SUBMIT: RECUPERAÇÃO DE SENHA
+  const handleRecovery = (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg(null);
+
+    const cleanEmail = recEmail.trim().toLowerCase();
+
+    if (!cleanEmail || !cleanEmail.includes('@')) {
+      setErrorMsg('Informe um e-mail válido para recuperação.');
+      return;
+    }
+
+    setIsLoading(true);
+
+    setTimeout(() => {
+      setIsLoading(false);
+      setRecSuccess(true);
+    }, 600);
   };
 
   return (
     <div className="min-h-screen w-screen bg-[#F8FAFC] flex flex-col justify-between select-none font-['Inter',sans-serif] text-slate-800">
-      {/* Topo / Barra de Status */}
+      {/* Topo Limpo com Logo e Status */}
       <header className="h-16 border-b border-slate-200 bg-white px-6 flex items-center justify-between shadow-xs">
         <div className="flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-[#1D4ED8] flex items-center justify-center text-white shadow-sm">
@@ -176,358 +310,380 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                 v2.0
               </span>
             </div>
-            <p className="text-[12px] text-slate-500">Acesso Seguro do Operador de Caixa</p>
+            <p className="text-[12px] text-slate-500">Ponto de Venda de Alta Performance</p>
           </div>
         </div>
 
-        <div className="flex items-center gap-4 text-[13px]">
-          {/* Status Supabase */}
-          <div
-            className={`hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-lg border text-[12px] font-medium ${
-              supabaseStatus.connected
-                ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
-                : 'border-slate-200 bg-slate-50 text-slate-600'
+        {/* Indicador discreto de status */}
+        <div className="flex items-center gap-2 text-[12px] font-medium text-slate-600 bg-slate-50 px-3 py-1.5 rounded-lg border border-slate-200">
+          <span
+            className={`w-2 h-2 rounded-full ${
+              supabaseStatus.connected ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'
             }`}
-          >
-            <Database size={14} className={supabaseStatus.connected ? 'text-emerald-600' : 'text-slate-400'} />
-            <span>Supabase: {supabaseStatus.connected ? 'Conectado' : 'Offline / Local'}</span>
-            <span
-              className={`w-2 h-2 rounded-full ${
-                supabaseStatus.connected ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'
-              }`}
-            />
-          </div>
-
-          {/* Relógio e Data */}
-          <div className="flex items-center gap-3 border-l border-slate-200 pl-4 text-slate-600">
-            <span className="hidden md:flex items-center gap-1.5">
-              <Calendar size={14} className="text-slate-400" />
-              {currentTime.toLocaleDateString('pt-BR', { weekday: 'short', day: '2-digit', month: 'short' })}
-            </span>
-            <span className="flex items-center gap-1.5 font-mono font-semibold text-slate-900">
-              <Clock size={14} className="text-blue-600" />
-              {currentTime.toLocaleTimeString('pt-BR')}
-            </span>
-          </div>
+          />
+          <span>{supabaseStatus.connected ? 'Supabase Online' : 'Modo Seguro Local'}</span>
         </div>
       </header>
 
-      {/* Conteúdo Principal — Login Card */}
-      <main className="flex-1 flex items-center justify-center p-4 sm:p-6 lg:p-8">
-        <div className="w-full max-w-4xl grid grid-cols-1 lg:grid-cols-12 bg-white rounded-2xl border border-slate-200 shadow-xl overflow-hidden">
+      {/* Área Central — Card de Autenticação */}
+      <main className="flex-1 flex items-center justify-center p-4 sm:p-6">
+        <div className="w-full max-w-md bg-white rounded-2xl border border-slate-200 shadow-xl overflow-hidden transition-all">
           
-          {/* Coluna Esquerda: Informações e Acesso Rápido (5 colunas) */}
-          <div className="lg:col-span-5 bg-slate-900 text-white p-6 sm:p-8 flex flex-col justify-between border-b lg:border-b-0 lg:border-r border-slate-800">
-            <div>
-              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-blue-500/20 text-blue-300 text-[12px] font-semibold mb-4 border border-blue-400/30">
-                <ShieldCheck size={14} />
-                Terminal Autorizado
-              </div>
-
-              <h1 className="text-2xl font-bold tracking-tight text-white mb-2">
-                Abertura de Caixa
-              </h1>
-              <p className="text-slate-300 text-[13px] leading-relaxed mb-6">
-                Identifique-se para liberar o caixa, sincronizar produtos com o Supabase e iniciar o registro de vendas.
-              </p>
-
-              {/* Perfis Rápidos para Demonstração */}
-              <div className="space-y-3">
-                <div className="flex items-center justify-between text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-                  <span>Operadores de Turno</span>
-                  <span className="text-blue-400">Clique para preencher</span>
-                </div>
-
-                <div className="grid grid-cols-1 gap-2">
-                  {MOCK_OPERATORS.map((op) => {
-                    const isSelected = identificador === op.matricula;
-                    return (
-                      <button
-                        key={op.id}
-                        type="button"
-                        onClick={() => handleSelectQuickOperator(op)}
-                        className={`flex items-center justify-between p-2.5 rounded-xl border text-left transition-all cursor-pointer ${
-                          isSelected
-                            ? 'bg-blue-600/30 border-blue-500 text-white'
-                            : 'bg-slate-800/60 border-slate-700/60 text-slate-200 hover:bg-slate-800 hover:border-slate-600'
-                        }`}
-                      >
-                        <div className="flex items-center gap-3">
-                          <div
-                            className="w-8 h-8 rounded-lg flex items-center justify-center font-bold text-xs text-white"
-                            style={{ backgroundColor: op.avatarCor }}
-                          >
-                            {op.nome.charAt(0)}
-                          </div>
-                          <div>
-                            <p className="text-[13px] font-semibold leading-tight">{op.nome}</p>
-                            <p className="text-[11px] text-slate-400 capitalize">
-                              {op.cargo} • Matrícula {op.matricula}
-                            </p>
-                          </div>
-                        </div>
-                        <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-slate-950/60 text-slate-300 border border-slate-700">
-                          {op.senha}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
+          {/* Cabeçalho do Card com Cores do Sistema */}
+          <div className="bg-[#1D4ED8] text-white p-6 sm:p-8 text-center relative">
+            <div className="w-12 h-12 rounded-2xl bg-white/10 border border-white/20 flex items-center justify-center mx-auto mb-3 text-white shadow-inner">
+              {view === 'login' && <LogIn size={24} />}
+              {view === 'register' && <UserPlus size={24} />}
+              {view === 'recovery' && <KeyRound size={24} />}
             </div>
 
-            {/* Dica de rodapé */}
-            <div className="pt-6 mt-6 border-t border-slate-800 text-[12px] text-slate-400 flex items-center gap-2">
-              <Sparkles size={14} className="text-amber-400 shrink-0" />
-              <span>Dica: Pressione <kbd className="px-1.5 py-0.5 rounded bg-slate-800 text-slate-200 border border-slate-700 font-mono">Enter</kbd> para autenticar rapidamente.</span>
-            </div>
+            <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-white mb-1">
+              {view === 'login' && 'Entrar no Sistema'}
+              {view === 'register' && 'Cadastrar Nova Senha'}
+              {view === 'recovery' && 'Recuperar Acesso'}
+            </h1>
+
+            <p className="text-blue-100 text-[13px]">
+              {view === 'login' && 'Digite seu e-mail e senha para acessar o PDV'}
+              {view === 'register' && 'Crie suas credenciais para acesso de operador'}
+              {view === 'recovery' && 'Redefina sua senha através do seu e-mail'}
+            </p>
           </div>
 
-          {/* Coluna Direita: Formulário de Credenciais (7 colunas) */}
-          <div className="lg:col-span-7 p-6 sm:p-8 flex flex-col justify-between">
-            <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="flex items-center justify-between pb-2 border-b border-slate-100">
-                <div>
-                  <h2 className="text-lg font-bold text-slate-900">Credenciais de Acesso</h2>
-                  <p className="text-[13px] text-slate-500">Informe seus dados para prosseguir</p>
-                </div>
-
-                {/* Alternador de Modo: Teclado vs PIN Touch */}
-                <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 text-[12px] font-semibold">
-                  <button
-                    type="button"
-                    onClick={() => setLoginMode('teclado')}
-                    className={`px-3 py-1 rounded-lg transition-all cursor-pointer ${
-                      loginMode === 'teclado'
-                        ? 'bg-white text-slate-900 shadow-xs'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    Teclado
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setLoginMode('pin')}
-                    className={`px-3 py-1 rounded-lg transition-all cursor-pointer flex items-center gap-1 ${
-                      loginMode === 'pin'
-                        ? 'bg-white text-slate-900 shadow-xs'
-                        : 'text-slate-600 hover:text-slate-900'
-                    }`}
-                  >
-                    <KeyRound size={12} />
-                    PIN Touch
-                  </button>
-                </div>
+          <div className="p-6 sm:p-8">
+            {/* Alertas de Erro ou Sucesso */}
+            {errorMsg && (
+              <div className="mb-5 p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-[13px] flex items-center gap-2.5">
+                <AlertCircle size={17} className="text-rose-600 shrink-0" />
+                <span>{errorMsg}</span>
               </div>
+            )}
 
-              {/* Mensagem de Erro */}
-              {errorMessage && (
-                <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-[13px] flex items-center gap-2.5">
-                  <AlertCircle size={16} className="text-rose-600 shrink-0" />
-                  <span>{errorMessage}</span>
-                </div>
-              )}
-
-              {/* Campo 1: Matrícula / Operador */}
-              <div>
-                <label className="block text-[12px] font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
-                  Matrícula ou E-mail do Operador
-                </label>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
-                    <User size={18} />
-                  </div>
-                  <input
-                    ref={identificadorInputRef}
-                    type="text"
-                    value={identificador}
-                    onChange={(e) => {
-                      setIdentificador(e.target.value);
-                      setErrorMessage(null);
-                    }}
-                    placeholder="Ex: 1001 ou carlos.silva"
-                    className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-300 text-slate-900 text-sm font-medium focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all placeholder:text-slate-400 bg-slate-50/50 hover:bg-white"
-                  />
-                </div>
+            {successMsg && (
+              <div className="mb-5 p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-800 text-[13px] flex items-center gap-2.5">
+                <CheckCircle2 size={17} className="text-emerald-600 shrink-0" />
+                <span>{successMsg}</span>
               </div>
+            )}
 
-              {/* Campo 2: Senha ou PIN */}
-              <div>
-                <label className="block text-[12px] font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
-                  {loginMode === 'pin' ? 'PIN Numérico (4 a 8 dígitos)' : 'Senha de Acesso'}
-                </label>
-                <div className="relative">
-                  <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
-                    <Lock size={18} />
-                  </div>
-                  <input
-                    ref={senhaInputRef}
-                    type={showPassword ? 'text' : 'password'}
-                    value={senha}
-                    onChange={(e) => {
-                      setSenha(e.target.value);
-                      setErrorMessage(null);
-                    }}
-                    placeholder="Digite sua senha..."
-                    className="w-full pl-10 pr-11 py-2.5 rounded-xl border border-slate-300 text-slate-900 text-sm font-medium tracking-wide focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all placeholder:text-slate-400 bg-slate-50/50 hover:bg-white"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(!showPassword)}
-                    className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-slate-400 hover:text-slate-600 transition-colors cursor-pointer"
-                    title={showPassword ? 'Ocultar senha' : 'Exibir senha'}
-                  >
-                    {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-                  </button>
-                </div>
-              </div>
-
-              {/* MODO PIN TOUCHSCREEN (Teclado Virtual de PDV) */}
-              {loginMode === 'pin' && (
-                <div className="pt-2">
-                  <div className="grid grid-cols-3 gap-2 bg-slate-50 p-3 rounded-xl border border-slate-200">
-                    {['1', '2', '3', '4', '5', '6', '7', '8', '9'].map((num) => (
-                      <button
-                        key={num}
-                        type="button"
-                        onClick={() => handlePinInput(num)}
-                        className="py-3 bg-white hover:bg-blue-50 hover:border-blue-300 border border-slate-200 rounded-xl text-lg font-bold text-slate-800 active:scale-95 transition-all shadow-xs cursor-pointer"
-                      >
-                        {num}
-                      </button>
-                    ))}
-                    <button
-                      type="button"
-                      onClick={handlePinClear}
-                      className="py-3 bg-slate-200 hover:bg-slate-300 border border-slate-300 rounded-xl text-xs font-bold text-slate-700 active:scale-95 transition-all cursor-pointer"
-                    >
-                      LIMPAR
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handlePinInput('0')}
-                      className="py-3 bg-white hover:bg-blue-50 hover:border-blue-300 border border-slate-200 rounded-xl text-lg font-bold text-slate-800 active:scale-95 transition-all shadow-xs cursor-pointer"
-                    >
-                      0
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handlePinBackspace}
-                      className="py-3 bg-rose-100 hover:bg-rose-200 border border-rose-300 rounded-xl text-xs font-bold text-rose-800 active:scale-95 transition-all flex items-center justify-center cursor-pointer"
-                    >
-                      <Delete size={18} />
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {/* Configurações de Abertura: Caixa e Fundo de Troco */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2">
-                {/* Seleção do Caixa */}
+            {/* ========================================================= */}
+            {/* VIEW 1: TELA DE LOGIN                                    */}
+            {/* ========================================================= */}
+            {view === 'login' && (
+              <form onSubmit={handleLogin} className="space-y-4">
                 <div>
                   <label className="block text-[12px] font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
-                    Terminal / Caixa
+                    E-mail
                   </label>
                   <div className="relative">
-                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
-                      <Monitor size={16} />
-                    </div>
-                    <select
-                      value={terminal}
-                      onChange={(e) => setTerminal(e.target.value)}
-                      className="w-full pl-9 pr-8 py-2 rounded-xl border border-slate-300 text-slate-900 text-[13px] font-semibold bg-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all cursor-pointer"
-                    >
-                      {AVAILABLE_TERMINALS.map((term) => (
-                        <option key={term.id} value={term.id}>
-                          {term.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-
-                {/* Fundo de Troco Inicial (Suprimento) */}
-                <div>
-                  <label className="block text-[12px] font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
-                    Fundo de Troco Inicial
-                  </label>
-                  <div className="relative">
-                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-emerald-600 font-bold text-xs">
-                      <DollarSign size={16} />
+                    <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                      <Mail size={18} />
                     </div>
                     <input
-                      type="number"
-                      step="10"
-                      min="0"
-                      value={fundoTroco}
-                      onChange={(e) => setFundoTroco(parseFloat(e.target.value) || 0)}
-                      className="w-full pl-9 pr-3 py-2 rounded-xl border border-slate-300 text-slate-900 text-[13px] font-bold focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-all bg-white"
+                      ref={emailInputRef}
+                      type="email"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      placeholder="seu.email@empresa.com"
+                      className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-300 text-slate-900 text-sm font-medium focus:ring-2 focus:ring-[#1D4ED8] focus:border-[#1D4ED8] outline-none transition-all placeholder:text-slate-400 bg-slate-50/50 hover:bg-white"
+                      required
                     />
                   </div>
                 </div>
-              </div>
 
-              {/* Botões de Preenchimento Rápido de Fundo de Troco */}
-              <div className="flex items-center gap-2 pt-1">
-                <span className="text-[11px] text-slate-500">Valores sugeridos:</span>
-                {[50, 100, 150, 200].map((val) => (
-                  <button
-                    key={val}
-                    type="button"
-                    onClick={() => setFundoTroco(val)}
-                    className={`px-2 py-0.5 rounded text-[11px] font-semibold transition-all border cursor-pointer ${
-                      fundoTroco === val
-                        ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
-                        : 'bg-slate-100 text-slate-600 border-slate-200 hover:bg-slate-200'
-                    }`}
-                  >
-                    R$ {val}
-                  </button>
-                ))}
-              </div>
+                <div>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="block text-[12px] font-semibold text-slate-700 uppercase tracking-wider">
+                      Senha
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRecEmail(email);
+                        setRecSuccess(false);
+                        setView('recovery');
+                      }}
+                      className="text-[12px] font-semibold text-[#1D4ED8] hover:text-[#1E40AF] hover:underline cursor-pointer transition-colors"
+                    >
+                      Esqueceu a senha?
+                    </button>
+                  </div>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                      <Lock size={18} />
+                    </div>
+                    <input
+                      type={showPassword ? 'text' : 'password'}
+                      value={senha}
+                      onChange={(e) => setSenha(e.target.value)}
+                      placeholder="••••••••"
+                      className="w-full pl-10 pr-11 py-2.5 rounded-xl border border-slate-300 text-slate-900 text-sm font-medium tracking-wide focus:ring-2 focus:ring-[#1D4ED8] focus:border-[#1D4ED8] outline-none transition-all placeholder:text-slate-400 bg-slate-50/50 hover:bg-white"
+                      required
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-slate-400 hover:text-slate-600 transition-colors cursor-pointer"
+                    >
+                      {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                    </button>
+                  </div>
+                </div>
 
-              {/* Lembrar Operador */}
-              <div className="flex items-center justify-between pt-2">
-                <label className="flex items-center gap-2 text-[13px] text-slate-600 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={lembrarLogin}
-                    onChange={(e) => setLembrarLogin(e.target.checked)}
-                    className="w-4 h-4 rounded text-blue-600 focus:ring-blue-500 border-slate-300 cursor-pointer"
-                  />
-                  <span>Lembrar operador neste navegador</span>
-                </label>
-              </div>
+                <div className="flex items-center justify-between pt-1">
+                  <label className="flex items-center gap-2 text-[13px] text-slate-600 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={lembrarMe}
+                      onChange={(e) => setLembrarMe(e.target.checked)}
+                      className="w-4 h-4 rounded text-[#1D4ED8] focus:ring-[#1D4ED8] border-slate-300 cursor-pointer"
+                    />
+                    <span>Manter conectado</span>
+                  </label>
+                </div>
 
-              {/* Botão de Submissão Principal */}
-              <button
-                type="submit"
-                disabled={isLoading}
-                className="w-full py-3.5 px-4 rounded-xl bg-[#1D4ED8] hover:bg-[#1E40AF] text-white font-bold text-base shadow-md shadow-blue-500/20 active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-70 disabled:cursor-not-allowed mt-2"
-              >
-                {isLoading ? (
-                  <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                <button
+                  type="submit"
+                  disabled={isLoading}
+                  className="w-full py-3 px-4 rounded-xl bg-[#1D4ED8] hover:bg-[#1E40AF] text-white font-bold text-sm shadow-md shadow-blue-600/20 active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-70 disabled:cursor-not-allowed mt-3"
+                >
+                  {isLoading ? (
+                    <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  ) : (
+                    <>
+                      <LogIn size={18} />
+                      <span>Entrar</span>
+                    </>
+                  )}
+                </button>
+
+                <div className="pt-4 border-t border-slate-100 text-center">
+                  <p className="text-[13px] text-slate-600">
+                    Ainda não possui senha cadastrada?{' '}
+                    <button
+                      type="button"
+                      onClick={() => setView('register')}
+                      className="font-bold text-[#1D4ED8] hover:text-[#1E40AF] hover:underline cursor-pointer"
+                    >
+                      Cadastrar Senha
+                    </button>
+                  </p>
+                </div>
+              </form>
+            )}
+
+            {/* ========================================================= */}
+            {/* VIEW 2: CADASTRO DE SENHA / NOVA CONTA                    */}
+            {/* ========================================================= */}
+            {view === 'register' && (
+              <form onSubmit={handleRegister} className="space-y-4">
+                <div>
+                  <label className="block text-[12px] font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
+                    Nome Completo
+                  </label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                      <User size={18} />
+                    </div>
+                    <input
+                      ref={regNomeInputRef}
+                      type="text"
+                      value={regNome}
+                      onChange={(e) => setRegNome(e.target.value)}
+                      placeholder="Ex: Carlos Silva"
+                      className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-300 text-slate-900 text-sm font-medium focus:ring-2 focus:ring-[#1D4ED8] focus:border-[#1D4ED8] outline-none transition-all placeholder:text-slate-400 bg-slate-50/50 hover:bg-white"
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[12px] font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
+                    E-mail
+                  </label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                      <Mail size={18} />
+                    </div>
+                    <input
+                      type="email"
+                      value={regEmail}
+                      onChange={(e) => setRegEmail(e.target.value)}
+                      placeholder="seu.email@empresa.com"
+                      className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-300 text-slate-900 text-sm font-medium focus:ring-2 focus:ring-[#1D4ED8] focus:border-[#1D4ED8] outline-none transition-all placeholder:text-slate-400 bg-slate-50/50 hover:bg-white"
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[12px] font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
+                    Nova Senha
+                  </label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                      <Lock size={18} />
+                    </div>
+                    <input
+                      type={showRegPassword ? 'text' : 'password'}
+                      value={regSenha}
+                      onChange={(e) => setRegSenha(e.target.value)}
+                      placeholder="Mínimo 4 dígitos..."
+                      className="w-full pl-10 pr-11 py-2.5 rounded-xl border border-slate-300 text-slate-900 text-sm font-medium tracking-wide focus:ring-2 focus:ring-[#1D4ED8] focus:border-[#1D4ED8] outline-none transition-all placeholder:text-slate-400 bg-slate-50/50 hover:bg-white"
+                      required
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowRegPassword(!showRegPassword)}
+                      className="absolute inset-y-0 right-0 pr-3.5 flex items-center text-slate-400 hover:text-slate-600 transition-colors cursor-pointer"
+                    >
+                      {showRegPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-[12px] font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
+                    Confirmar Nova Senha
+                  </label>
+                  <div className="relative">
+                    <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                      <Lock size={18} />
+                    </div>
+                    <input
+                      type={showRegPassword ? 'text' : 'password'}
+                      value={regConfirmSenha}
+                      onChange={(e) => setRegConfirmSenha(e.target.value)}
+                      placeholder="Confirme sua senha..."
+                      className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-300 text-slate-900 text-sm font-medium tracking-wide focus:ring-2 focus:ring-[#1D4ED8] focus:border-[#1D4ED8] outline-none transition-all placeholder:text-slate-400 bg-slate-50/50 hover:bg-white"
+                      required
+                    />
+                  </div>
+                </div>
+
+                <button
+                  type="submit"
+                  disabled={isLoading}
+                  className="w-full py-3 px-4 rounded-xl bg-[#1D4ED8] hover:bg-[#1E40AF] text-white font-bold text-sm shadow-md shadow-blue-600/20 active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-70 disabled:cursor-not-allowed mt-3"
+                >
+                  {isLoading ? (
+                    <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  ) : (
+                    <>
+                      <UserPlus size={18} />
+                      <span>Cadastrar Senha</span>
+                    </>
+                  )}
+                </button>
+
+                <div className="pt-4 border-t border-slate-100 text-center">
+                  <p className="text-[13px] text-slate-600">
+                    Já possui acesso?{' '}
+                    <button
+                      type="button"
+                      onClick={() => setView('login')}
+                      className="font-bold text-[#1D4ED8] hover:text-[#1E40AF] hover:underline cursor-pointer"
+                    >
+                      Fazer Login
+                    </button>
+                  </p>
+                </div>
+              </form>
+            )}
+
+            {/* ========================================================= */}
+            {/* VIEW 3: RECUPERAÇÃO DE SENHA                              */}
+            {/* ========================================================= */}
+            {view === 'recovery' && (
+              <div className="space-y-4">
+                {recSuccess ? (
+                  <div className="text-center py-4 space-y-3">
+                    <div className="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto">
+                      <CheckCircle2 size={26} />
+                    </div>
+                    <h2 className="text-base font-bold text-slate-900">E-mail de Recuperação Enviado!</h2>
+                    <p className="text-[13px] text-slate-600 leading-relaxed max-w-sm mx-auto">
+                      Enviamos as instruções de redefinição de senha para o e-mail{' '}
+                      <strong className="text-slate-900">{recEmail}</strong>. Verifique sua caixa de entrada e spam.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRecSuccess(false);
+                        setView('login');
+                      }}
+                      className="w-full py-2.5 px-4 rounded-xl bg-[#1D4ED8] hover:bg-[#1E40AF] text-white font-bold text-sm shadow-md transition-all cursor-pointer mt-4"
+                    >
+                      Voltar para o Login
+                    </button>
+                  </div>
                 ) : (
-                  <>
-                    <LogIn size={18} />
-                    <span>Abrir Caixa & Iniciar PDV</span>
-                  </>
+                  <form onSubmit={handleRecovery} className="space-y-4">
+                    <p className="text-[13px] text-slate-600">
+                      Informe seu e-mail cadastrado e enviaremos um link para você redefinir sua senha com segurança.
+                    </p>
+
+                    <div>
+                      <label className="block text-[12px] font-semibold text-slate-700 uppercase tracking-wider mb-1.5">
+                        E-mail Cadastrado
+                      </label>
+                      <div className="relative">
+                        <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-400">
+                          <Mail size={18} />
+                        </div>
+                        <input
+                          ref={recEmailInputRef}
+                          type="email"
+                          value={recEmail}
+                          onChange={(e) => setRecEmail(e.target.value)}
+                          placeholder="seu.email@empresa.com"
+                          className="w-full pl-10 pr-4 py-2.5 rounded-xl border border-slate-300 text-slate-900 text-sm font-medium focus:ring-2 focus:ring-[#1D4ED8] focus:border-[#1D4ED8] outline-none transition-all placeholder:text-slate-400 bg-slate-50/50 hover:bg-white"
+                          required
+                        />
+                      </div>
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={isLoading}
+                      className="w-full py-3 px-4 rounded-xl bg-[#1D4ED8] hover:bg-[#1E40AF] text-white font-bold text-sm shadow-md shadow-blue-600/20 active:scale-[0.99] transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-70 disabled:cursor-not-allowed mt-3"
+                    >
+                      {isLoading ? (
+                        <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      ) : (
+                        <>
+                          <KeyRound size={18} />
+                          <span>Enviar Link de Recuperação</span>
+                        </>
+                      )}
+                    </button>
+
+                    <div className="pt-4 border-t border-slate-100 text-center">
+                      <button
+                        type="button"
+                        onClick={() => setView('login')}
+                        className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-slate-600 hover:text-slate-900 cursor-pointer"
+                      >
+                        <ArrowLeft size={16} />
+                        <span>Voltar para o Login</span>
+                      </button>
+                    </div>
+                  </form>
                 )}
-              </button>
-            </form>
+              </div>
+            )}
           </div>
         </div>
       </main>
 
-      {/* Rodapé institucional */}
+      {/* Rodapé Institucional */}
       <footer className="h-12 border-t border-slate-200 bg-white px-6 flex items-center justify-between text-[12px] text-slate-500">
         <div>
-          <span>PDV Inteligente v2.0 • Sistema Comercial de Ponto de Venda</span>
+          <span>PDV Inteligente v2.0 • Acesso de Operador</span>
         </div>
-        <div className="flex items-center gap-4">
-          <span className="hidden sm:inline">Ambiente Homologado</span>
+        <div className="flex items-center gap-2">
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-          <span>Terminal Online</span>
+          <span>Ambiente Seguro</span>
         </div>
       </footer>
     </div>
