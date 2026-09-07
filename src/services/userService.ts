@@ -142,6 +142,172 @@ const notifyChange = () => {
 };
 
 /**
+ * Consulta o backend para sincronizar usuários do Supabase
+ */
+export const fetchRemoteUsers = async (): Promise<{
+  source: 'supabase' | 'server_memory' | 'local';
+  users: SystemUser[];
+  supabaseTableMissing?: boolean;
+  message?: string;
+  sqlScript?: string;
+}> => {
+  try {
+    const res = await fetch('/api/users');
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data.users) && data.users.length > 0) {
+        const local = getSystemUsers();
+        // Mescla com usuários locais preservando senhas
+        const remoteList: SystemUser[] = data.users.map((ru: any) => ({
+          id: String(ru.id),
+          matricula: String(ru.matricula || ''),
+          nome: String(ru.nome || ''),
+          email: String(ru.email || '').toLowerCase().trim(),
+          cargo: ru.cargo || 'operador',
+          status: ru.status || 'ativo',
+          avatarCor: ru.avatarCor || ru.avatar_cor || '#1D4ED8',
+          criadoEm: ru.criadoEm || ru.created_at || new Date().toISOString(),
+          ultimoAcesso: ru.ultimoAcesso || ru.ultimo_acesso || undefined,
+          estaConectado: Boolean(ru.estaConectado ?? ru.esta_conectado ?? false),
+          terminalConectado: ru.terminalConectado || ru.terminal_conectado || undefined,
+        }));
+
+        const merged = remoteList.map((ru) => {
+          const matched = local.find((l) => l.email.toLowerCase() === ru.email.toLowerCase());
+          return {
+            ...ru,
+            senha: matched?.senha || ru.senha || '1234',
+          };
+        });
+
+        // Adiciona algum criado offline
+        local.forEach((l) => {
+          if (!merged.some((m) => m.email.toLowerCase() === l.email.toLowerCase())) {
+            merged.push(l);
+          }
+        });
+
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+        notifyChange();
+
+        return {
+          source: data.source || 'server_memory',
+          users: merged,
+          supabaseTableMissing: Boolean(data.supabaseTableMissing),
+          message: data.message,
+          sqlScript: data.sqlScript,
+        };
+      } else if (data.supabaseTableMissing) {
+        return {
+          source: 'server_memory',
+          users: getSystemUsers(),
+          supabaseTableMissing: true,
+          message: data.message,
+          sqlScript: data.sqlScript,
+        };
+      }
+    }
+  } catch {
+    // Falha silenciosa de rede, mantém offline
+  }
+
+  return {
+    source: 'local',
+    users: getSystemUsers(),
+    supabaseTableMissing: false,
+  };
+};
+
+/**
+ * Verifica o status do Schema no Supabase
+ */
+export const checkSupabaseUsersSchema = async () => {
+  try {
+    const res = await fetch('/api/supabase/schema-status');
+    if (res.ok) {
+      return await res.json();
+    }
+  } catch {
+    // Ignora
+  }
+  return {
+    configured: false,
+    connected: false,
+    usersTableMissing: true,
+  };
+};
+
+/**
+ * Envia todos os usuários locais para persistência no Supabase
+ */
+export const syncAllUsersToSupabase = async () => {
+  const users = getSystemUsers();
+  try {
+    const res = await fetch('/api/users/sync-all', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-user-role': 'admin',
+      },
+      body: JSON.stringify({ users }),
+    });
+    return await res.json();
+  } catch (err: any) {
+    return { success: false, error: err?.message || 'Falha na requisição' };
+  }
+};
+
+/**
+ * Dispara persistência assíncrona no backend / Supabase
+ */
+const syncUserToBackend = async (
+  userData: {
+    id?: string;
+    matricula?: string;
+    nome: string;
+    email: string;
+    senha?: string;
+    cargo: UserRole;
+    status: UserStatus;
+    avatarCor?: string;
+  },
+  isUpdate: boolean
+) => {
+  try {
+    const endpoint = isUpdate && userData.id ? `/api/users/${userData.id}` : '/api/users';
+    const method = isUpdate ? 'PUT' : 'POST';
+
+    const res = await fetch(endpoint, {
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+        'x-user-role': 'admin',
+      },
+      body: JSON.stringify(userData),
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      if (data.user && data.user.id) {
+        const currentUsers = getSystemUsers();
+        const target = currentUsers.find(
+          (u) => u.email.toLowerCase() === userData.email.toLowerCase()
+        );
+        if (target && target.id !== data.user.id) {
+          target.id = data.user.id;
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(currentUsers));
+          notifyChange();
+        }
+      }
+      return data;
+    }
+  } catch (err) {
+    console.warn('Falha ao sincronizar usuário com o backend:', err);
+  }
+  return null;
+};
+
+/**
  * Obtém todos os usuários do sistema
  */
 export const getSystemUsers = (): SystemUser[] => {
@@ -269,6 +435,7 @@ export const saveSystemUser = (
 
     users[index] = updated;
     setSystemUsers(users);
+    syncUserToBackend({ ...userData, id: updated.id }, true);
     return { success: true, user: updated };
   } else {
     // CRIAÇÃO (CREATE)
@@ -293,6 +460,7 @@ export const saveSystemUser = (
 
     users.unshift(newUser);
     setSystemUsers(users);
+    syncUserToBackend({ ...userData, matricula: newUser.matricula, avatarCor: chosenColor }, false);
     return { success: true, user: newUser };
   }
 };
@@ -318,6 +486,12 @@ export const deleteSystemUser = (id: string): { success: boolean; message?: stri
 
   users.splice(index, 1);
   setSystemUsers(users);
+
+  fetch(`/api/users/${id}`, {
+    method: 'DELETE',
+    headers: { 'x-user-role': 'admin' },
+  }).catch(() => {});
+
   return { success: true };
 };
 
@@ -351,6 +525,13 @@ export const toggleSystemUserStatus = (
   }
 
   setSystemUsers(users);
+
+  fetch(`/api/users/${id}/status`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', 'x-user-role': 'admin' },
+    body: JSON.stringify({ status: targetStatus }),
+  }).catch(() => {});
+
   return { success: true, user };
 };
 
@@ -366,6 +547,13 @@ export const disconnectUserSession = (id: string): boolean => {
   user.estaConectado = false;
   user.terminalConectado = undefined;
   setSystemUsers(users);
+
+  fetch(`/api/users/${id}/connect`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ estaConectado: false, terminalConectado: null }),
+  }).catch(() => {});
+
   return true;
 };
 
@@ -400,6 +588,13 @@ export const registerUserLogin = (
   user.ipOuDispositivo = `${terminal} (Navegador Ativo)`;
 
   setSystemUsers(users);
+
+  fetch(`/api/users/${user.id}/connect`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ estaConectado: true, terminalConectado: terminal }),
+  }).catch(() => {});
+
   return { success: true, user };
 };
 
@@ -418,6 +613,12 @@ export const registerUserLogout = (userIdOrEmail: string): void => {
     user.estaConectado = false;
     user.terminalConectado = undefined;
     setSystemUsers(users);
+
+    fetch(`/api/users/${user.id}/connect`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ estaConectado: false, terminalConectado: null }),
+    }).catch(() => {});
   }
 };
 

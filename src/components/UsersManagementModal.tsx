@@ -22,6 +22,10 @@ import {
   Key,
   Filter,
   Check,
+  Copy,
+  Code,
+  Database,
+  Cloud,
 } from 'lucide-react';
 import { SystemUser, UserRole, UserStatus, SessionInfo } from '../types';
 import {
@@ -34,6 +38,9 @@ import {
   isAdminRole,
   canAccessUserManagement,
   canDeleteUser,
+  fetchRemoteUsers,
+  checkSupabaseUsersSchema,
+  syncAllUsersToSupabase,
 } from '../services/userService';
 
 interface UsersManagementModalProps {
@@ -42,6 +49,38 @@ interface UsersManagementModalProps {
   currentSession: SessionInfo | null;
   onSessionTerminated?: () => void;
 }
+
+const SUPABASE_CREATE_SQL = `-- 1. Cria a tabela users pública no Supabase
+CREATE TABLE IF NOT EXISTS public.users (
+  id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  matricula TEXT,
+  nome TEXT NOT NULL,
+  email TEXT NOT NULL UNIQUE,
+  cargo TEXT NOT NULL DEFAULT 'operador',
+  status TEXT NOT NULL DEFAULT 'ativo',
+  avatar_cor TEXT DEFAULT '#1D4ED8',
+  esta_conectado BOOLEAN DEFAULT false,
+  terminal_conectado TEXT,
+  ultimo_acesso TIMESTAMPTZ,
+  created_at TIMESTAMPTZ DEFAULT now(),
+  updated_at TIMESTAMPTZ DEFAULT now()
+);
+
+-- 2. Habilita Row Level Security
+ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
+
+-- 3. Políticas de acesso
+CREATE POLICY "Permitir leitura de usuários"
+  ON public.users FOR SELECT USING (true);
+
+CREATE POLICY "Permitir inserção de usuários"
+  ON public.users FOR INSERT WITH CHECK (true);
+
+CREATE POLICY "Permitir atualização de usuários"
+  ON public.users FOR UPDATE USING (true);
+
+CREATE POLICY "Permitir exclusão de usuários"
+  ON public.users FOR DELETE USING (true);`;
 
 const AVATAR_PALETTE = [
   '#1D4ED8', // Azul PDV
@@ -64,6 +103,13 @@ export const UsersManagementModal: React.FC<UsersManagementModalProps> = ({
   const [searchQuery, setSearchQuery] = useState('');
   const [filterRole, setFilterRole] = useState<'todos' | UserRole>('todos');
   const [activeTab, setActiveTab] = useState<'todos' | 'conectados' | 'ativos' | 'inativos'>('todos');
+
+  // Supabase Status
+  const [supabaseTableMissing, setSupabaseTableMissing] = useState(false);
+  const [supabaseConnected, setSupabaseConnected] = useState(false);
+  const [isCheckingSupabase, setIsCheckingSupabase] = useState(false);
+  const [showSqlModal, setShowSqlModal] = useState(false);
+  const [sqlCopied, setSqlCopied] = useState(false);
 
   // Modal de Edição / Criação
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
@@ -88,10 +134,67 @@ export const UsersManagementModal: React.FC<UsersManagementModalProps> = ({
     setUsers(getSystemUsers());
   };
 
+  const handleFetchRemote = async () => {
+    setIsCheckingSupabase(true);
+    try {
+      const res = await fetchRemoteUsers();
+      if (res.supabaseTableMissing) {
+        setSupabaseTableMissing(true);
+        setSupabaseConnected(false);
+      } else if (res.source === 'supabase') {
+        setSupabaseTableMissing(false);
+        setSupabaseConnected(true);
+      }
+    } finally {
+      setIsCheckingSupabase(false);
+    }
+  };
+
+  const handleCopySql = () => {
+    navigator.clipboard.writeText(SUPABASE_CREATE_SQL);
+    setSqlCopied(true);
+    setTimeout(() => setSqlCopied(false), 3000);
+    showNotice('Script SQL copiado para a área de transferência!', 'success');
+  };
+
+  const handleCheckSupabaseStatus = async () => {
+    setIsCheckingSupabase(true);
+    try {
+      const status = await checkSupabaseUsersSchema();
+      if (status.usersTableMissing) {
+        setSupabaseTableMissing(true);
+        setSupabaseConnected(false);
+        showNotice(
+          'A tabela "users" ainda não existe no Supabase. Cole o SQL no editor do Supabase e clique em Run.',
+          'error'
+        );
+      } else {
+        setSupabaseTableMissing(false);
+        setSupabaseConnected(true);
+        // Sincroniza em lote
+        const syncRes = await syncAllUsersToSupabase();
+        if (syncRes.success) {
+          showNotice(
+            `Tabela detectada e ${syncRes.syncedCount || 'todos'} usuários sincronizados com sucesso no Supabase!`,
+            'success'
+          );
+        } else {
+          showNotice('Conexão estabelecida com a tabela users no Supabase!', 'success');
+        }
+        await fetchRemoteUsers();
+      }
+    } catch {
+      showNotice('Não foi possível verificar o Supabase no momento.', 'error');
+    } finally {
+      setIsCheckingSupabase(false);
+    }
+  };
+
   useEffect(() => {
     if (isOpen) {
       refreshUsers();
       setActionNotice(null);
+      handleFetchRemote();
     }
   }, [isOpen]);
 
@@ -352,6 +455,18 @@ export const UsersManagementModal: React.FC<UsersManagementModalProps> = ({
                 <span className="px-2 py-0.5 rounded-full text-[11px] font-semibold bg-blue-50 text-blue-700 border border-blue-200">
                   Painel de Controle
                 </span>
+                {supabaseConnected && !supabaseTableMissing && (
+                  <span className="hidden md:inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200">
+                    <Cloud size={12} className="text-emerald-600" />
+                    Supabase Nuvem Ativo
+                  </span>
+                )}
+                {supabaseTableMissing && (
+                  <span className="hidden md:inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-amber-50 text-amber-800 border border-amber-300 animate-pulse">
+                    <Database size={12} className="text-amber-600" />
+                    Tabela Supabase Pendente
+                  </span>
+                )}
               </div>
               <p className="text-[12px] text-slate-500">
                 Gerencie permissões, controle conexões ativas e mantenha o acesso dos operadores
@@ -379,6 +494,59 @@ export const UsersManagementModal: React.FC<UsersManagementModalProps> = ({
             </button>
           </div>
         </div>
+
+        {/* BANNER DE DIAGNÓSTICO E CRIAÇÃO DA TABELA SUPABASE */}
+        {supabaseTableMissing && (
+          <div className="bg-amber-50/90 border-b border-amber-200 px-4 sm:px-6 py-3 text-amber-900 text-xs">
+            <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-3">
+              <div className="flex items-start gap-2.5">
+                <AlertCircle size={18} className="text-amber-600 shrink-0 mt-0.5" />
+                <div>
+                  <div className="font-bold text-amber-950 flex items-center gap-2">
+                    <span>A tabela "users" ainda não foi criada no seu Supabase</span>
+                    <span className="px-1.5 py-0.5 rounded text-[10px] bg-amber-200 text-amber-900 font-mono font-semibold">
+                      PGRST205
+                    </span>
+                  </div>
+                  <p className="text-amber-800 text-[11px] mt-0.5 leading-relaxed">
+                    Copie o script SQL abaixo, abra o <strong>SQL Editor</strong> do seu painel Supabase e execute com 1 clique para habilitar persistência remota. Os usuários atuais estão salvos com segurança no navegador.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 shrink-0 self-end md:self-auto">
+                <button
+                  type="button"
+                  onClick={handleCopySql}
+                  className="px-3 py-1.5 rounded-lg text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white shadow-xs flex items-center gap-1.5 transition-all cursor-pointer"
+                >
+                  <Copy size={13} />
+                  <span>{sqlCopied ? 'SQL Copiado!' : 'Copiar Script SQL'}</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowSqlModal(true)}
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-amber-300 text-amber-900 hover:bg-amber-100 flex items-center gap-1.5 transition-all cursor-pointer"
+                >
+                  <Code size={13} />
+                  <span>Ver Instruções</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleCheckSupabaseStatus}
+                  disabled={isCheckingSupabase}
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-amber-300 text-amber-900 hover:bg-amber-100 flex items-center gap-1.5 transition-all cursor-pointer disabled:opacity-50"
+                  title="Verificar se a tabela já foi criada no Supabase"
+                >
+                  <RefreshCw size={13} className={isCheckingSupabase ? 'animate-spin' : ''} />
+                  <span>{isCheckingSupabase ? 'Verificando...' : 'Verificar Supabase'}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* NOTIFICAÇÃO RÁPIDA DE AÇÃO */}
         {actionNotice && (
@@ -954,6 +1122,91 @@ export const UsersManagementModal: React.FC<UsersManagementModalProps> = ({
                 className="flex-1 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold shadow-xs active:scale-95 cursor-pointer"
               >
                 Sim, Remover
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL INSTRUÇÕES & SCRIPT SQL SUPABASE                                    */}
+      {/* ========================================================================= */}
+      {showSqlModal && (
+        <div className="fixed inset-0 z-80 flex items-center justify-center p-4 bg-slate-950/75 backdrop-blur-xs animate-fade-in">
+          <div className="bg-white w-full max-w-2xl rounded-2xl border border-slate-200 shadow-2xl flex flex-col max-h-[90vh] overflow-hidden animate-scale-up">
+            <div className="p-5 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center">
+                  <Database size={18} />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-slate-900">Script SQL para o Supabase</h3>
+                  <p className="text-xs text-slate-500">
+                    Crie a tabela <code>public.users</code> em 3 passos simples
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowSqlModal(false)}
+                className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-200 rounded-lg cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-5 space-y-4 overflow-y-auto text-xs text-slate-700">
+              <div className="bg-blue-50 border border-blue-200 rounded-xl p-3.5 space-y-2 text-blue-900">
+                <p className="font-bold text-[13px] flex items-center gap-1.5">
+                  <CheckCircle2 size={16} className="text-blue-600" />
+                  Passo a Passo de Instalação:
+                </p>
+                <ol className="list-decimal pl-5 space-y-1 text-xs">
+                  <li>Abra o painel do seu projeto no Supabase (<strong>supabase.com/dashboard</strong>).</li>
+                  <li>Clique no menu lateral em <strong>SQL Editor</strong> e depois em <strong>New query</strong>.</li>
+                  <li>Cole o script SQL abaixo e clique no botão <strong>Run</strong> (ou aperte Ctrl + Enter).</li>
+                  <li>Volte aqui e clique no botão <strong>Verificar Supabase</strong>. Seus usuários serão sincronizados automaticamente!</li>
+                </ol>
+              </div>
+
+              <div className="relative">
+                <div className="flex items-center justify-between bg-slate-900 text-slate-300 px-4 py-2 rounded-t-xl text-[11px] font-mono">
+                  <span>sql/create_users.sql</span>
+                  <button
+                    type="button"
+                    onClick={handleCopySql}
+                    className="flex items-center gap-1 text-emerald-400 hover:text-emerald-300 transition-colors font-sans font-semibold cursor-pointer"
+                  >
+                    <Copy size={13} />
+                    <span>{sqlCopied ? 'Copiado!' : 'Copiar'}</span>
+                  </button>
+                </div>
+                <pre className="p-4 bg-slate-950 text-slate-100 rounded-b-xl overflow-x-auto text-[11px] font-mono leading-relaxed border border-slate-800 max-h-64">
+                  {SUPABASE_CREATE_SQL}
+                </pre>
+              </div>
+            </div>
+
+            <div className="p-4 border-t border-slate-200 bg-slate-50 flex items-center justify-between">
+              <button
+                type="button"
+                onClick={handleCopySql}
+                className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs flex items-center gap-1.5 shadow-xs cursor-pointer"
+              >
+                <Copy size={14} />
+                <span>{sqlCopied ? 'Script Copiado!' : 'Copiar Script SQL'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setShowSqlModal(false);
+                  handleCheckSupabaseStatus();
+                }}
+                className="px-4 py-2 rounded-xl bg-[#1D4ED8] hover:bg-[#1E40AF] text-white font-bold text-xs flex items-center gap-1.5 shadow-xs cursor-pointer"
+              >
+                <RefreshCw size={14} />
+                <span>Já executei, testar agora</span>
               </button>
             </div>
           </div>

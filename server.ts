@@ -499,6 +499,132 @@ let SERVER_USERS = [
   },
 ];
 
+// Helpers para conversão entre o modelo da aplicação e as colunas do Supabase/PostgreSQL
+function toSupabaseUser(user: any) {
+  return {
+    matricula: String(user.matricula || ''),
+    nome: String(user.nome || '').trim(),
+    email: String(user.email || '').trim().toLowerCase(),
+    senha: String(user.senha || '1234'),
+    cargo: String(user.cargo || 'operador'),
+    status: String(user.status || 'ativo'),
+    avatar_cor: user.avatarCor || user.avatar_cor || '#1D4ED8',
+    esta_conectado: Boolean(user.estaConectado ?? user.esta_conectado ?? false),
+    terminal_conectado: user.terminalConectado || user.terminal_conectado || null,
+    ultimo_acesso: user.ultimoAcesso || user.ultimo_acesso || new Date().toISOString(),
+  };
+}
+
+function fromSupabaseUser(row: any) {
+  return {
+    id: String(row.id),
+    matricula: String(row.matricula || ''),
+    nome: row.nome || '',
+    email: row.email || '',
+    senha: row.senha || '1234',
+    cargo: row.cargo || 'operador',
+    status: row.status || 'ativo',
+    avatarCor: row.avatar_cor || row.avatarCor || '#1D4ED8',
+    criadoEm: row.created_at || row.criadoEm || new Date().toISOString(),
+    ultimoAcesso: row.ultimo_acesso || row.ultimoAcesso || new Date().toISOString(),
+    estaConectado: Boolean(row.esta_conectado ?? row.estaConectado ?? false),
+    terminalConectado: row.terminal_conectado || row.terminalConectado || undefined,
+  };
+}
+
+// SQL pronto para criação da tabela no Supabase
+const CREATE_USERS_TABLE_SQL = `-- EXECUTE ESTE SCRIPT NO SUPABASE SQL EDITOR:
+CREATE TABLE IF NOT EXISTS public.users (
+  id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  matricula VARCHAR(32) NOT NULL UNIQUE,
+  nome VARCHAR(255) NOT NULL,
+  email VARCHAR(255) NOT NULL UNIQUE,
+  senha VARCHAR(255) NOT NULL DEFAULT '1234',
+  cargo VARCHAR(32) NOT NULL DEFAULT 'operador' CHECK (cargo IN ('admin', 'gerente', 'supervisor', 'operador')),
+  status VARCHAR(20) NOT NULL DEFAULT 'ativo' CHECK (status IN ('ativo', 'inativo')),
+  avatar_cor VARCHAR(32) DEFAULT '#1D4ED8',
+  esta_conectado BOOLEAN DEFAULT false,
+  terminal_conectado VARCHAR(64),
+  ultimo_acesso TIMESTAMPTZ DEFAULT NOW(),
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Habilitar RLS e criar políticas
+ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS "Permitir leitura de usuários" ON public.users;
+CREATE POLICY "Permitir leitura de usuários" ON public.users FOR SELECT USING (true);
+
+DROP POLICY IF EXISTS "Permitir inserção de usuários" ON public.users;
+CREATE POLICY "Permitir inserção de usuários" ON public.users FOR INSERT WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Permitir atualização de usuários" ON public.users;
+CREATE POLICY "Permitir atualização de usuários" ON public.users FOR UPDATE USING (true);
+
+DROP POLICY IF EXISTS "Permitir exclusão de usuários" ON public.users;
+CREATE POLICY "Permitir exclusão de usuários" ON public.users FOR DELETE USING (true);
+
+-- Carga inicial recomendada
+INSERT INTO public.users (matricula, nome, email, senha, cargo, status, avatar_cor, esta_conectado)
+VALUES
+  ('2002', 'Mariana Costa', 'admin@supermercado.com', 'admin', 'admin', 'ativo', '#7C3AED', false),
+  ('1001', 'Carlos Silva', 'carlos.silva@supermercado.com', '1234', 'operador', 'ativo', '#1D4ED8', false),
+  ('1003', 'Lucas Mendes', 'lucas.mendes@supermercado.com', '1234', 'operador', 'ativo', '#059669', false),
+  ('1004', 'Ana Beatriz', 'ana.beatriz@supermercado.com', '1234', 'supervisor', 'ativo', '#D97706', false)
+ON CONFLICT (email) DO UPDATE
+SET
+  cargo = EXCLUDED.cargo,
+  status = EXCLUDED.status;`;
+
+// 0. Diagnóstico detalhado do Schema no Supabase
+app.get(['/api/supabase/schema-status', '/supabase/schema-status'], async (_req: Request, res: Response) => {
+  const sb = getSupabase();
+  if (!sb) {
+    return res.json({
+      configured: false,
+      connected: false,
+      message: 'Supabase não configurado no ambiente.',
+      tables: {},
+      usersTableMissing: true,
+      sqlScript: CREATE_USERS_TABLE_SQL,
+    });
+  }
+
+  const checkTable = async (tableName: string) => {
+    try {
+      const { count, error } = await sb.from(tableName).select('*', { count: 'exact', head: true });
+      if (error) {
+        const isMissing = error.code === 'PGRST205' || error.message?.includes('schema cache');
+        return { exists: !isMissing, count: null, error: error.message, code: error.code };
+      }
+      return { exists: true, count: count ?? 0, error: null };
+    } catch (err: any) {
+      return { exists: false, count: null, error: err?.message || 'Falha desconhecida' };
+    }
+  };
+
+  const [productsStatus, salesStatus, saleItemsStatus, usersStatus] = await Promise.all([
+    checkTable('products'),
+    checkTable('sales'),
+    checkTable('sale_items'),
+    checkTable('users'),
+  ]);
+
+  return res.json({
+    configured: true,
+    connected: true,
+    tables: {
+      products: productsStatus,
+      sales: salesStatus,
+      sale_items: saleItemsStatus,
+      users: usersStatus,
+    },
+    usersTableMissing: !usersStatus.exists,
+    sqlScript: CREATE_USERS_TABLE_SQL,
+  });
+});
+
 // 1. Listar todos os usuários (com filtros opcionais ?status=ativo & ?role=...)
 app.get(['/api/users', '/users'], async (req: Request, res: Response) => {
   const { status, role } = req.query;
@@ -510,8 +636,53 @@ app.get(['/api/users', '/users'], async (req: Request, res: Response) => {
       if (status) query = query.eq('status', String(status));
       if (role) query = query.eq('cargo', String(role));
       const { data, error } = await query;
-      if (!error && data && data.length > 0) {
-        return res.json({ source: 'supabase', users: data });
+
+      if (error) {
+        const isMissing = error.code === 'PGRST205' || error.message?.includes('schema cache');
+        if (isMissing) {
+          // Tabela users ainda não criada no Supabase
+          let localUsers = [...SERVER_USERS];
+          if (status) localUsers = localUsers.filter((u) => u.status === status);
+          if (role) localUsers = localUsers.filter((u) => u.cargo === role);
+          const safeUsers = localUsers.map(({ senha, ...rest }) => rest);
+
+          return res.json({
+            source: 'server_memory',
+            supabaseConnected: true,
+            supabaseTableMissing: true,
+            message: "A tabela 'users' ainda não foi criada no Supabase. Execute o script SQL no Supabase Dashboard.",
+            sqlScript: CREATE_USERS_TABLE_SQL,
+            users: safeUsers,
+            total: safeUsers.length,
+          });
+        }
+      } else if (data) {
+        // Se a tabela existe mas está vazia, auto-semeia com os usuários padrão
+        if (data.length === 0 && !status && !role) {
+          try {
+            const seedRows = SERVER_USERS.map(toSupabaseUser);
+            const { data: inserted, error: seedError } = await sb.from('users').insert(seedRows).select();
+            if (!seedError && inserted && inserted.length > 0) {
+              const mapped = inserted.map(fromSupabaseUser).map(({ senha, ...rest }) => rest);
+              return res.json({
+                source: 'supabase',
+                supabaseTableMissing: false,
+                users: mapped,
+                total: mapped.length,
+              });
+            }
+          } catch {
+            // Ignora falha no auto-seed e segue
+          }
+        }
+
+        const mapped = data.map(fromSupabaseUser).map(({ senha, ...rest }) => rest);
+        return res.json({
+          source: 'supabase',
+          supabaseTableMissing: false,
+          users: mapped,
+          total: mapped.length,
+        });
       }
     } catch {
       // Fallback para armazenamento interno
@@ -526,9 +697,13 @@ app.get(['/api/users', '/users'], async (req: Request, res: Response) => {
     result = result.filter((u) => u.cargo === role);
   }
 
-  // Remove campo senha ao listar por segurança
   const safeUsers = result.map(({ senha, ...rest }) => rest);
-  return res.json({ source: 'server_memory', users: safeUsers, total: safeUsers.length });
+  return res.json({
+    source: 'server_memory',
+    supabaseTableMissing: false,
+    users: safeUsers,
+    total: safeUsers.length,
+  });
 });
 
 // 2. Endpoint exclusivo para listar TODOS OS USUÁRIOS ATIVOS
@@ -539,11 +714,12 @@ app.get(['/api/users/active', '/users/active'], async (_req: Request, res: Respo
     try {
       const { data, error } = await sb.from('users').select('*').eq('status', 'ativo');
       if (!error && data) {
+        const mapped = data.map(fromSupabaseUser).map(({ senha, ...rest }) => rest);
         return res.json({
           source: 'supabase',
           status: 'ativo',
-          total: data.length,
-          users: data,
+          total: mapped.length,
+          users: mapped,
         });
       }
     } catch {
@@ -563,86 +739,265 @@ app.get(['/api/users/active', '/users/active'], async (_req: Request, res: Respo
   });
 });
 
-// 3. Cadastrar usuário (Acesso restrito: admin ou gerente)
-app.post(['/api/users', '/users'], requireRole(['admin', 'gerente']), (req: Request, res: Response) => {
-  const { nome, email, senha = '1234', cargo = 'operador', status = 'ativo', matricula } = req.body;
+// 3. Cadastrar usuário (CRUD - Create) com sincronização no Supabase
+app.post(['/api/users', '/users'], requireRole(['admin', 'gerente']), async (req: Request, res: Response) => {
+  const { nome, email, senha = '1234', cargo = 'operador', status = 'ativo', matricula, avatarCor } = req.body;
 
   if (!nome || !email) {
     return res.status(400).json({ error: 'Nome e E-mail são obrigatórios.' });
   }
 
   const cleanEmail = email.trim().toLowerCase();
-  const exists = SERVER_USERS.find((u) => u.email.toLowerCase() === cleanEmail);
-  if (exists) {
+  const existsLocal = SERVER_USERS.find((u) => u.email.toLowerCase() === cleanEmail);
+  if (existsLocal) {
     return res.status(409).json({ error: 'Já existe um usuário com este e-mail.' });
   }
 
+  const generatedMatricula = matricula || (1000 + SERVER_USERS.length + 1).toString();
   const newUser = {
     id: `user-${Date.now()}`,
-    matricula: matricula || (1000 + SERVER_USERS.length + 1).toString(),
+    matricula: generatedMatricula,
     nome: nome.trim(),
     email: cleanEmail,
     senha,
     cargo,
     status,
-    avatarCor: '#1D4ED8',
+    avatarCor: avatarCor || '#1D4ED8',
     criadoEm: new Date().toISOString(),
     ultimoAcesso: new Date().toISOString(),
     estaConectado: false,
+    terminalConectado: undefined,
   };
+
+  const sb = getSupabase();
+  let supabaseResult = null;
+  let supabaseTableMissing = false;
+
+  if (sb) {
+    try {
+      const rowToInsert = toSupabaseUser(newUser);
+      const { data, error } = await sb.from('users').insert(rowToInsert).select().single();
+
+      if (error) {
+        console.warn('Erro ao inserir no Supabase:', error.message);
+        if (error.code === 'PGRST205' || error.message?.includes('schema cache')) {
+          supabaseTableMissing = true;
+        }
+      } else if (data) {
+        supabaseResult = fromSupabaseUser(data);
+        newUser.id = supabaseResult.id;
+      }
+    } catch (err: any) {
+      console.warn('Exceção ao persistir no Supabase:', err?.message);
+    }
+  }
 
   SERVER_USERS.push(newUser);
   const { senha: _, ...safeUser } = newUser;
-  return res.status(201).json({ success: true, user: safeUser });
+
+  return res.status(201).json({
+    success: true,
+    source: supabaseResult ? 'supabase' : 'server_memory',
+    supabaseTableMissing,
+    user: safeUser,
+    message: supabaseResult
+      ? 'Usuário criado com sucesso no Supabase!'
+      : supabaseTableMissing
+      ? "Usuário salvo localmente. Crie a tabela 'users' no Supabase para sincronizar em nuvem."
+      : 'Usuário registrado com sucesso.',
+  });
 });
 
-// 4. Alterar Status Ativo/Inativo (Admin ou Gerente)
+// 4. Atualizar dados do usuário (CRUD - Update)
+app.put(['/api/users/:id', '/users/:id'], requireRole(['admin', 'gerente']), async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { nome, email, senha, cargo, status, matricula, avatarCor } = req.body;
+
+  const userIndex = SERVER_USERS.findIndex((u) => u.id === id || u.email.toLowerCase() === String(email || '').toLowerCase());
+  let targetUser = userIndex !== -1 ? SERVER_USERS[userIndex] : null;
+
+  const updates: any = {};
+  if (nome) updates.nome = nome.trim();
+  if (email) updates.email = email.trim().toLowerCase();
+  if (senha) updates.senha = senha.trim();
+  if (cargo) updates.cargo = cargo;
+  if (status) updates.status = status;
+  if (matricula) updates.matricula = matricula;
+  if (avatarCor) updates.avatar_cor = avatarCor;
+
+  const sb = getSupabase();
+  let supabaseUpdated = false;
+
+  if (sb) {
+    try {
+      const { data, error } = await sb
+        .from('users')
+        .update(updates)
+        .or(`id.eq.${id},email.eq.${email || targetUser?.email || ''}`)
+        .select();
+
+      if (!error && data && data.length > 0) {
+        supabaseUpdated = true;
+      }
+    } catch (err: any) {
+      console.warn('Erro ao atualizar no Supabase:', err?.message);
+    }
+  }
+
+  if (targetUser) {
+    if (nome) targetUser.nome = nome.trim();
+    if (email) targetUser.email = email.trim().toLowerCase();
+    if (senha) targetUser.senha = senha.trim();
+    if (cargo) targetUser.cargo = cargo;
+    if (status) targetUser.status = status;
+    if (matricula) targetUser.matricula = matricula;
+    if (avatarCor) targetUser.avatarCor = avatarCor;
+  }
+
+  return res.json({
+    success: true,
+    source: supabaseUpdated ? 'supabase' : 'server_memory',
+    message: 'Dados do usuário atualizados com sucesso.',
+  });
+});
+
+// 5. Alterar Status Ativo/Inativo (Admin ou Gerente)
 app.patch(
   ['/api/users/:id/status', '/users/:id/status'],
   requireRole(['admin', 'gerente']),
-  (req: Request, res: Response) => {
+  async (req: Request, res: Response) => {
     const { id } = req.params;
     const { status } = req.body;
 
     const user = SERVER_USERS.find((u) => u.id === id);
-    if (!user) {
-      return res.status(404).json({ error: 'Usuário não encontrado.' });
+    const newStatus = status === 'inativo' ? 'inativo' : 'ativo';
+
+    if (user) {
+      user.status = newStatus;
+      if (newStatus === 'inativo') {
+        user.estaConectado = false;
+        user.terminalConectado = undefined;
+      }
     }
 
-    user.status = status === 'inativo' ? 'inativo' : 'ativo';
-    if (user.status === 'inativo') {
-      user.estaConectado = false;
+    const sb = getSupabase();
+    if (sb) {
+      try {
+        await sb
+          .from('users')
+          .update({
+            status: newStatus,
+            esta_conectado: newStatus === 'inativo' ? false : undefined,
+          })
+          .or(`id.eq.${id},email.eq.${user?.email || ''}`);
+      } catch {
+        // Ignora erro no Supabase
+      }
     }
 
-    const { senha: _, ...safeUser } = user;
+    const safeUser = user ? (({ senha, ...rest }) => rest)(user) : { id, status: newStatus };
     return res.json({ success: true, user: safeUser });
   }
 );
 
-// 5. Excluir usuário (Acesso EXCLUSIVO do Administrador)
+// 6. Atualizar Conexão/Terminal do Usuário
+app.patch(['/api/users/:id/connect', '/users/:id/connect'], async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { estaConectado, terminalConectado } = req.body;
+
+  const user = SERVER_USERS.find((u) => u.id === id);
+  if (user) {
+    user.estaConectado = Boolean(estaConectado);
+    user.terminalConectado = terminalConectado || undefined;
+    user.ultimoAcesso = new Date().toISOString();
+  }
+
+  const sb = getSupabase();
+  if (sb) {
+    try {
+      await sb
+        .from('users')
+        .update({
+          esta_conectado: Boolean(estaConectado),
+          terminal_conectado: terminalConectado || null,
+          ultimo_acesso: new Date().toISOString(),
+        })
+        .or(`id.eq.${id},email.eq.${user?.email || ''}`);
+    } catch {
+      // Ignora erro
+    }
+  }
+
+  return res.json({ success: true });
+});
+
+// 7. Excluir usuário (Acesso EXCLUSIVO do Administrador)
 app.delete(
   ['/api/users/:id', '/users/:id'],
   requireRole(['admin']),
-  (req: Request, res: Response) => {
+  async (req: Request, res: Response) => {
     const { id } = req.params;
     const index = SERVER_USERS.findIndex((u) => u.id === id);
 
-    if (index === -1) {
-      return res.status(404).json({ error: 'Usuário não encontrado.' });
-    }
-
-    // Não permitir excluir o último admin
-    if (SERVER_USERS[index].cargo === 'admin') {
+    if (index !== -1 && SERVER_USERS[index].cargo === 'admin') {
       const adminCount = SERVER_USERS.filter((u) => u.cargo === 'admin').length;
       if (adminCount <= 1) {
         return res.status(400).json({ error: 'Não é permitido remover o único Administrador do sistema.' });
       }
     }
 
-    SERVER_USERS.splice(index, 1);
+    const targetEmail = index !== -1 ? SERVER_USERS[index].email : '';
+
+    const sb = getSupabase();
+    if (sb) {
+      try {
+        await sb.from('users').delete().or(`id.eq.${id},email.eq.${targetEmail}`);
+      } catch (err: any) {
+        console.warn('Erro ao deletar no Supabase:', err?.message);
+      }
+    }
+
+    if (index !== -1) {
+      SERVER_USERS.splice(index, 1);
+    }
+
     return res.json({ success: true, message: 'Usuário removido com sucesso.' });
   }
 );
+
+// 8. Sincronizar todos os usuários locais com o Supabase (Bulk Sync)
+app.post(['/api/users/sync-all', '/users/sync-all'], requireRole(['admin', 'gerente']), async (req: Request, res: Response) => {
+  const { users } = req.body;
+  const userList: any[] = Array.isArray(users) && users.length > 0 ? users : SERVER_USERS;
+
+  const sb = getSupabase();
+  if (!sb) {
+    return res.status(400).json({ success: false, error: 'Supabase não conectado.' });
+  }
+
+  try {
+    const rows = userList.map(toSupabaseUser);
+    const { data, error } = await sb.from('users').upsert(rows, { onConflict: 'email' }).select();
+
+    if (error) {
+      const isMissing = error.code === 'PGRST205' || error.message?.includes('schema cache');
+      return res.status(400).json({
+        success: false,
+        supabaseTableMissing: isMissing,
+        error: error.message,
+        sqlScript: CREATE_USERS_TABLE_SQL,
+      });
+    }
+
+    return res.json({
+      success: true,
+      syncedCount: data?.length ?? rows.length,
+      message: `${data?.length ?? rows.length} usuários sincronizados com o Supabase com sucesso!`,
+    });
+  } catch (err: any) {
+    return res.status(500).json({ success: false, error: err?.message || 'Falha ao sincronizar' });
+  }
+});
 
 // Inicialização do servidor Vite e Express
 async function startServer() {
