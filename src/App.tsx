@@ -17,8 +17,14 @@ import { ShortcutsHelpModal } from './components/ShortcutsHelpModal';
 import { SupabaseInfoModal } from './components/SupabaseInfoModal';
 import { LoginScreen } from './components/LoginScreen';
 import { UsersManagementModal } from './components/UsersManagementModal';
+import { Sidebar } from './components/Sidebar';
+import { SalesHistoryModal } from './components/SalesHistoryModal';
+import { CashMovementModal } from './components/CashMovementModal';
+import { QuickCalculatorModal } from './components/QuickCalculatorModal';
+import { PeripheralsStatusModal } from './components/PeripheralsStatusModal';
 import { checkSupabaseStatus, fetchProducts, registerSale, SupabaseStatus } from './services/api';
 import { registerUserLogout } from './services/userService';
+import { recordCompletedSale } from './services/salesSessionService';
 import { CheckCircle } from 'lucide-react';
 
 export default function App() {
@@ -34,6 +40,27 @@ export default function App() {
     return null;
   });
 
+  // Estado da barra lateral (expandida ou recolhida)
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('pdv_sidebar_collapsed') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleSidebar = useCallback(() => {
+    setIsSidebarCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem('pdv_sidebar_collapsed', String(next));
+      } catch {
+        // Ignora
+      }
+      return next;
+    });
+  }, []);
+
   const [products, setProducts] = useState<Product[]>(MOCK_PRODUTOS);
   const [supabaseStatus, setSupabaseStatus] = useState<SupabaseStatus>({
     configured: false,
@@ -42,6 +69,12 @@ export default function App() {
   });
   const [isSupabaseModalOpen, setIsSupabaseModalOpen] = useState<boolean>(false);
   const [isTestingSupabase, setIsTestingSupabase] = useState<boolean>(false);
+
+  // Modais de ferramentas da barra lateral
+  const [isSalesHistoryOpen, setIsSalesHistoryOpen] = useState<boolean>(false);
+  const [isCashMovementOpen, setIsCashMovementOpen] = useState<boolean>(false);
+  const [isCalculatorOpen, setIsCalculatorOpen] = useState<boolean>(false);
+  const [isPeripheralsOpen, setIsPeripheralsOpen] = useState<boolean>(false);
 
   // Estado do Carrinho (começa com exemplo funcional para visualização imediata)
   const [cartItems, setCartItems] = useState<CartItem[]>([
@@ -262,6 +295,7 @@ export default function App() {
 
   // Finalizar venda com sucesso
   const handleConfirmSale = async (method: PaymentMethodType, received: number, change: number) => {
+    const saleCode = `VD-${Date.now().toString().slice(-6)}`;
     const salePayload = {
       itens: cartItems,
       subtotal,
@@ -275,6 +309,22 @@ export default function App() {
       caixa: session?.caixa || 'Caixa 04',
     };
 
+    // Registra no histórico da sessão local instantaneamente
+    recordCompletedSale({
+      id: saleCode,
+      dataHora: new Date(),
+      itens: [...cartItems],
+      subtotal,
+      desconto: discountAmount,
+      descontoTipo: discountType,
+      total,
+      metodoPagamento: method,
+      valorRecebido: received,
+      troco: change,
+      operador: session?.operador.nome || 'Carlos Silva',
+      caixa: session?.caixa || 'Caixa 04',
+    });
+
     // Limpa a venda após pagamento
     setCartItems([]);
     setDiscount(0);
@@ -282,7 +332,7 @@ export default function App() {
     try {
       const result = await registerSale(salePayload);
       if (result.source === 'supabase' && result.success) {
-        showToast(`Venda registrada no Supabase! (${result.codigoVenda || 'OK'})`);
+        showToast(`Venda registrada no Supabase! (${result.codigoVenda || saleCode})`);
         // Atualiza estoque no catálogo local
         const { products: updatedProducts } = await fetchProducts();
         if (updatedProducts && updatedProducts.length > 0) {
@@ -299,6 +349,13 @@ export default function App() {
   // ATALHOS DE TECLADO GLOBAIS
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      // Ctrl + B: Alternar barra lateral
+      if (e.ctrlKey && (e.key === 'b' || e.key === 'B')) {
+        e.preventDefault();
+        toggleSidebar();
+        return;
+      }
+
       // F3: Focar na busca e limpar campo atual
       if (e.key === 'F3') {
         e.preventDefault();
@@ -341,11 +398,25 @@ export default function App() {
         setIsUsersModalOpen(true);
         return;
       }
+
+      // F4: Movimentação de Caixa (Sangria & Suprimento)
+      if (e.key === 'F4') {
+        e.preventDefault();
+        setIsCashMovementOpen(true);
+        return;
+      }
+
+      // F9: Histórico de Vendas
+      if (e.key === 'F9') {
+        e.preventDefault();
+        setIsSalesHistoryOpen(true);
+        return;
+      }
     };
 
     window.addEventListener('keydown', handleGlobalKeyDown);
     return () => window.removeEventListener('keydown', handleGlobalKeyDown);
-  }, [cartItems, showToast]);
+  }, [cartItems, showToast, toggleSidebar]);
 
   if (!session) {
     return (
@@ -358,7 +429,7 @@ export default function App() {
   }
 
   return (
-    <div className="h-screen w-screen flex flex-col bg-white overflow-hidden select-none font-['Inter',sans-serif]">
+    <div className="h-screen w-screen flex flex-row bg-white overflow-hidden select-none font-['Inter',sans-serif]">
       {/* Notificação / Toast de Acessibilidade */}
       <div aria-live="polite" role="alert" className="sr-only">
         {toastMessage}
@@ -371,55 +442,79 @@ export default function App() {
         </div>
       )}
 
-      {/* ZONA A — HEADER (64px altura fixa) */}
-      <Header
-        products={products}
-        onSelectProduct={(p) => handleAddToCart(p, 1)}
-        searchInputRef={searchInputRef}
-        searchQuery={searchQuery}
-        setSearchQuery={setSearchQuery}
-        onOpenConsultPrice={() => setIsConsultOpen(true)}
-        onOpenShortcuts={() => setIsShortcutsOpen(true)}
-        supabaseStatus={supabaseStatus}
-        onOpenSupabaseInfo={() => setIsSupabaseModalOpen(true)}
+      {/* BARRA LATERAL (SIDEBAR) MASTER */}
+      <Sidebar
+        isCollapsed={isSidebarCollapsed}
+        onToggleCollapse={toggleSidebar}
         session={session}
         onLogout={handleLogout}
+        onOpenConsultPrice={() => setIsConsultOpen(true)}
         onOpenUsersManagement={() => setIsUsersModalOpen(true)}
+        onOpenSupabaseInfo={() => setIsSupabaseModalOpen(true)}
+        onOpenShortcuts={() => setIsShortcutsOpen(true)}
+        onOpenSalesHistory={() => setIsSalesHistoryOpen(true)}
+        onOpenCashMovement={() => setIsCashMovementOpen(true)}
+        onOpenCalculator={() => setIsCalculatorOpen(true)}
+        onOpenPeripherals={() => setIsPeripheralsOpen(true)}
+        supabaseStatus={supabaseStatus}
       />
 
-      {/* ÁREA CENTRAL: ZONA B (CATÁLOGO 60%) + ZONA C (CARRINHO 40%) */}
-      <main className="flex-1 flex flex-col lg:flex-row min-h-0 overflow-hidden">
-        {/* ZONA B: CATÁLOGO */}
-        <Catalog
+      {/* ÁREA DE TRABALHO DO PDV (FLEX-1) */}
+      <div className="flex-1 flex flex-col min-w-0 h-screen overflow-hidden">
+        {/* ZONA A — HEADER (64px altura fixa) */}
+        <Header
           products={products}
-          onAddToCart={(p) => handleAddToCart(p, 1)}
-          lastAddedProductCode={lastAddedProductCode}
+          onSelectProduct={(p) => handleAddToCart(p, 1)}
+          searchInputRef={searchInputRef}
+          searchQuery={searchQuery}
+          setSearchQuery={setSearchQuery}
+          onOpenConsultPrice={() => setIsConsultOpen(true)}
+          onOpenShortcuts={() => setIsShortcutsOpen(true)}
+          supabaseStatus={supabaseStatus}
+          onOpenSupabaseInfo={() => setIsSupabaseModalOpen(true)}
+          session={session}
+          onLogout={handleLogout}
+          onOpenUsersManagement={() => setIsUsersModalOpen(true)}
+          onToggleSidebar={toggleSidebar}
+          isSidebarCollapsed={isSidebarCollapsed}
+          onOpenSalesHistory={() => setIsSalesHistoryOpen(true)}
+          onOpenCashMovement={() => setIsCashMovementOpen(true)}
         />
 
-        {/* ZONA C: CARRINHO */}
-        <Cart
-          items={cartItems}
-          onUpdateQuantity={handleUpdateQuantity}
-          onSetQuantity={handleSetQuantity}
-          onRemoveItem={handleRemoveItem}
-          onClearCart={handleClearCart}
-        />
-      </main>
+        {/* ÁREA CENTRAL: ZONA B (CATÁLOGO 60%) + ZONA C (CARRINHO 40%) */}
+        <main className="flex-1 flex flex-col lg:flex-row min-h-0 overflow-hidden">
+          {/* ZONA B: CATÁLOGO */}
+          <Catalog
+            products={products}
+            onAddToCart={(p) => handleAddToCart(p, 1)}
+            lastAddedProductCode={lastAddedProductCode}
+          />
 
-      {/* ZONA D — BARRA DE TOTALIZAÇÃO (80px altura fixa) */}
-      <TotalFooter
-        itemCount={cartItems.reduce((acc, curr) => acc + (curr.produto.unidade === 'un' ? curr.quantidade : 1), 0)}
-        subtotal={subtotal}
-        discount={discount}
-        discountType={discountType}
-        onDiscountChange={(val, type) => {
-          setDiscount(val);
-          setDiscountType(type);
-        }}
-        total={total}
-        onOpenPayment={() => setIsPaymentOpen(true)}
-        disabled={cartItems.length === 0}
-      />
+          {/* ZONA C: CARRINHO */}
+          <Cart
+            items={cartItems}
+            onUpdateQuantity={handleUpdateQuantity}
+            onSetQuantity={handleSetQuantity}
+            onRemoveItem={handleRemoveItem}
+            onClearCart={handleClearCart}
+          />
+        </main>
+
+        {/* ZONA D — BARRA DE TOTALIZAÇÃO (80px altura fixa) */}
+        <TotalFooter
+          itemCount={cartItems.reduce((acc, curr) => acc + (curr.produto.unidade === 'un' ? curr.quantidade : 1), 0)}
+          subtotal={subtotal}
+          discount={discount}
+          discountType={discountType}
+          onDiscountChange={(val, type) => {
+            setDiscount(val);
+            setDiscountType(type);
+          }}
+          total={total}
+          onOpenPayment={() => setIsPaymentOpen(true)}
+          disabled={cartItems.length === 0}
+        />
+      </div>
 
       {/* MODAL DE PAGAMENTO (F12) */}
       <PaymentModal
@@ -463,12 +558,37 @@ export default function App() {
         isRefreshing={isTestingSupabase}
       />
 
-      {/* MODAL DE GESTÃO DE USUÁRIOS & CONTROLE DE ACESSO (CRUD) */}
+      {/* MODAL DE GESTÃO DE USUÁRIOS & CONTROLE DE ACESSO (CRUD - F7) */}
       <UsersManagementModal
         isOpen={isUsersModalOpen}
         onClose={() => setIsUsersModalOpen(false)}
         currentSession={session}
         onSessionTerminated={handleLogout}
+      />
+
+      {/* MODAL DE HISTÓRICO DE VENDAS DA SESSÃO (F9) */}
+      <SalesHistoryModal
+        isOpen={isSalesHistoryOpen}
+        onClose={() => setIsSalesHistoryOpen(false)}
+      />
+
+      {/* MODAL DE MOVIMENTAÇÃO DE CAIXA (SANGRIA & SUPRIMENTO - F4) */}
+      <CashMovementModal
+        isOpen={isCashMovementOpen}
+        onClose={() => setIsCashMovementOpen(false)}
+        session={session}
+      />
+
+      {/* MODAL DE CALCULADORA RÁPIDA & TROCO */}
+      <QuickCalculatorModal
+        isOpen={isCalculatorOpen}
+        onClose={() => setIsCalculatorOpen(false)}
+      />
+
+      {/* MODAL DE DIAGNÓSTICO DE PERIFÉRICOS */}
+      <PeripheralsStatusModal
+        isOpen={isPeripheralsOpen}
+        onClose={() => setIsPeripheralsOpen(false)}
       />
     </div>
   );

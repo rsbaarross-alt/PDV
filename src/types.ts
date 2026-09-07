@@ -96,3 +96,27 @@ export interface SaleSummary {
   operador: string;
   caixa: string;
 }
+
+export type CashMovementType = 'suprimento' | 'sangria';
+
+export interface CashMovement {
+  id: string;
+  tipo: CashMovementType;
+  valor: number;
+  motivo: string;
+  dataHora: string;
+  operador: string;
+  caixa: string;
+  autorizadoPor?: string;
+}
+
+export interface PeripheralDevice {
+  id: string;
+  nome: string;
+  tipo: 'impressora' | 'balanca' | 'leitor' | 'gaveta';
+  modelo: string;
+  porta: string;
+  status: 'conectado' | 'atencao' | 'desconectado';
+  detalhes: string;
+}
+

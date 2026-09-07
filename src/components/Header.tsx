@@ -3,7 +3,26 @@
  * Logo PDV | Busca Inteligente (F3) | Info Operador & Relógio
  */
 import React, { useState, useEffect, useRef } from 'react';
-import { Search, ShoppingBag, Clock, User, Monitor, X, ArrowDown, ArrowUp, CornerDownLeft, Sparkles, Database, LogOut, ChevronDown, ShieldCheck, Users } from 'lucide-react';
+import {
+  Search,
+  ShoppingBag,
+  Clock,
+  User,
+  Monitor,
+  X,
+  ArrowDown,
+  ArrowUp,
+  CornerDownLeft,
+  Sparkles,
+  Database,
+  LogOut,
+  ChevronDown,
+  ShieldCheck,
+  Users,
+  PanelLeft,
+  Receipt,
+  Wallet,
+} from 'lucide-react';
 import { Product, SessionInfo } from '../types';
 import { fuzzySearchProducts, SearchMatchResult } from '../utils/fuzzySearch';
 import { formatBRL } from '../utils/formatters';
@@ -23,6 +42,10 @@ interface HeaderProps {
   session: SessionInfo | null;
   onLogout: () => void;
   onOpenUsersManagement: () => void;
+  onToggleSidebar?: () => void;
+  isSidebarCollapsed?: boolean;
+  onOpenSalesHistory?: () => void;
+  onOpenCashMovement?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -38,6 +61,10 @@ export const Header: React.FC<HeaderProps> = ({
   session,
   onLogout,
   onOpenUsersManagement,
+  onToggleSidebar,
+  isSidebarCollapsed,
+  onOpenSalesHistory,
+  onOpenCashMovement,
 }) => {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [isFocused, setIsFocused] = useState(false);
@@ -134,8 +161,18 @@ export const Header: React.FC<HeaderProps> = ({
       id="pdv-header"
       className="h-16 w-full border-b border-[#E2E8F0] bg-white flex items-center justify-between px-5 relative z-40 select-none shadow-[0_1px_3px_rgba(0,0,0,0.04)]"
     >
-      {/* Lado Esquerdo: Marca & Status */}
+      {/* Lado Esquerdo: Toggle da Sidebar + Marca & Status */}
       <div className="flex items-center gap-3 min-w-[220px]">
+        {onToggleSidebar && (
+          <button
+            type="button"
+            onClick={onToggleSidebar}
+            title={isSidebarCollapsed ? 'Expandir barra lateral' : 'Recolher barra lateral'}
+            className="p-2 rounded-xl text-slate-600 hover:text-blue-700 hover:bg-slate-100 border border-slate-200 transition-all cursor-pointer shadow-2xs"
+          >
+            <PanelLeft size={18} />
+          </button>
+        )}
         <div className="w-10 h-10 rounded-xl bg-[#1D4ED8] flex items-center justify-center text-white font-bold shadow-sm shadow-blue-500/20">
           <ShoppingBag size={20} className="stroke-[2.5]" />
         </div>
@@ -451,6 +488,34 @@ export const Header: React.FC<HeaderProps> = ({
                     {userMetrics.conectados} online
                   </span>
                 </button>
+
+                {onOpenSalesHistory && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsUserMenuOpen(false);
+                      onOpenSalesHistory();
+                    }}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-[13px] font-semibold text-slate-700 hover:bg-emerald-50 hover:text-emerald-700 rounded-xl transition-all cursor-pointer"
+                  >
+                    <Receipt size={15} className="text-emerald-600" />
+                    <span>Histórico de Vendas</span>
+                  </button>
+                )}
+
+                {onOpenCashMovement && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsUserMenuOpen(false);
+                      onOpenCashMovement();
+                    }}
+                    className="w-full flex items-center gap-2 px-3 py-2 text-[13px] font-semibold text-slate-700 hover:bg-amber-50 hover:text-amber-700 rounded-xl transition-all cursor-pointer"
+                  >
+                    <Wallet size={15} className="text-amber-600" />
+                    <span>Sangria & Suprimento</span>
+                  </button>
+                )}
 
                 <div className="h-px bg-slate-100 my-1"></div>
 
